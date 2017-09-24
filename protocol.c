@@ -20,6 +20,7 @@
 #include "protocol.h"
 #include "usb_transport.h"
 #include "shell.h"
+#include "io.h"
 
 unsigned short handshake_value;
 unsigned int last_size;
@@ -40,7 +41,7 @@ int send_connect(void);
 int receive_accept(void);
 #endif //LFMB_CLIENT
 
-int transport_init(void)
+int transport_reset(void)
 {
 	if(usb_bulkin_fd >= 0)
 		usb_reset();
@@ -49,7 +50,16 @@ int transport_init(void)
 		if(usb_init() < 0)
 			return -1;
 	}
-		
+	return transport_init();
+}
+
+int transport_init(void)
+{
+	if(fds[1] < 0)
+	{
+		if(usb_init() < 0)
+			return -1;
+	}	
 #ifdef LFMB_CLIENT
 	//handshake:
 	if(send_connect() < 0)
@@ -78,9 +88,10 @@ int send_connect(void)
 	handshake_value = rand() % 0xfffe;
 	ph->options = htole16(handshake_value);
 	ph->length = htole16(sizeof(struct packethdr));
-	
-	usb_ffs_write(packet, ph->length);	
-	
+
+	if(usb_ffs_write(packet, ph->length) < 0)
+		{ free(packet); return -1; }
+
 	free(packet);
 	return 0;
 }
@@ -93,14 +104,16 @@ int receive_accept(void)
 		{ free(packet); return -1; }
 	last_size = le16toh(ph->length);
 	if(last_size != sizeof(struct packethdr))
-		{ error("received bad accept message length %d\n", last_size); free(packet); return -1; }
+		{ error_message("received bad accept message length %d\n", last_size); free(packet); return -1; }
 	if(le16toh(ph->options) != handshake_value + 1)
 	{
-		error("handshake wrong: %04x", le16toh(ph->options));
+		error_message("handshake wrong: %04x", le16toh(ph->options));
 		send_error();
 		free(packet);
 		return -1;
 	}
+	message("received handshake\n");
+
 	connection_state = s_connected;
 	free(packet);
 	return 0;
@@ -223,11 +236,12 @@ int receive_filedata_to_follow(unsigned int * total_filesize)
 {
 	char * packet = calloc(1, sizeof(struct packethdr) + 4);
 	struct packethdr * ph = (struct packethdr *)packet;
+	
 	if(usb_ffs_read(packet, sizeof(struct packethdr) + 4) < 0)
 		{ free(packet); return -1; }
 	last_size = le16toh(ph->length);
 	if(last_size != sizeof(struct packethdr) + 4)
-		{ error("received bad filesize message length %d\n", last_size); free(packet); return -1; }
+		{ error_message("received bad filesize message length %d\n", last_size); free(packet); return -1; }
 	*total_filesize = le32toh(*(uint32_t *)&(packet[sizeof(struct packethdr)]));
 	free(packet);
 	return 0;
@@ -243,8 +257,9 @@ int receive_filedata(char ** buffer, unsigned int * bytes)
 	*bytes = last_size - sizeof(struct packethdr);
 	free(packet);
 	*buffer = calloc(1, *bytes);
+	message("Reading %d bytes into %p\n", *bytes, *buffer);
 	if(usb_ffs_read(*buffer, *bytes) < 0)
-		{ free(*buffer); *buffer = NULL; return -1; }
+		{ free(*buffer); *buffer = NULL; *bytes = 0; return -1; }
 	return 0;
 }
 
@@ -256,8 +271,9 @@ int receive_filechecksum(uint32_t * received_checksum)
 		{ free(packet); return -1; }
 	last_size = le16toh(ph->length);
 	if(last_size != sizeof(struct packethdr) + 4)
-		{ error("received bad file checksum message length %d\n", last_size); free(packet); return -1; }
+		{ error_message("received bad file checksum message length %d\n", last_size); free(packet); return -1; }
 	*received_checksum = le32toh(*(uint32_t *)&(packet[sizeof(struct packethdr)]));
+	message("received checksum %04x\n", *received_checksum);
 	free(packet);
 	return 0;
 }
@@ -276,7 +292,7 @@ int send_ack(void)
 	if(usb_ffs_write(packet, sizeof(struct packethdr) + 4) < 0)
 		{ free(packet); return -1; }
 	last_size = 0;
-	
+	message("sent ack\n");
 	free(packet);
 	return 0;
 }
@@ -307,12 +323,12 @@ int receive_ack(void)
 	if(usb_ffs_read(packet, sizeof(struct packethdr) + 4) < 0)
 		{ free(packet); return -1; }
 	if(le16toh(ph->command) != c_ack)
-		{ error("did not receive acknowledgement\n"); free(packet); return -1; }
+		{ error_message("did not receive acknowledgement\n"); free(packet); return -1; }
 	if(le16toh(ph->length) != sizeof(struct packethdr) + 4)
-		{ error("received bad ack length %d\n", le16toh(ph->length)); free(packet); return -1; }
+		{ error_message("received bad ack length %d\n", le16toh(ph->length)); free(packet); return -1; }
 	if(le32toh(*(uint32_t *)&(packet[sizeof(struct packethdr)])) != last_size)
 	{ 
-		error("received ack with last size equal to %d instead of %d\n", le32toh(*(uint32_t *)&(packet[sizeof(struct packethdr)])), last_size);
+		error_message("received ack with last size equal to %d instead of %d\n", le32toh(*(uint32_t *)&(packet[sizeof(struct packethdr)])), last_size);
 		free(packet);
 		return -1;
 	}
@@ -320,6 +336,7 @@ int receive_ack(void)
 	return 0;
 }
 
+#ifndef LFMB_CLIENT
 /* many of the receives are just in line and have their own calls outside the handler... */
 int handle(char * p, int len)
 {
@@ -329,21 +346,21 @@ int handle(char * p, int len)
 
 	if(le16toh(ph->length) != len)
 	{
-		error("received length %d does not match header specified lenth %d\n", le16toh(ph->length), len);
+		error_message("received length %d does not match header specified lenth %d\n", le16toh(ph->length), len);
 		send_error();
 		goto handle_error;
 	}
 
 	if(connection_state == s_no_connection && le16toh(ph->command) != (enum protocol_command)c_connect)
 	{
-		error("connection error %04x\n", le16toh(ph->command));
+		error_message("connection error %04x\n", le16toh(ph->command));
 		send_error();
 		goto handle_error;
 	}
 	else if(connection_state == s_shell && le16toh(ph->command) != (enum protocol_command)c_toshell && 
 					le16toh(ph->command) != (enum protocol_command)c_closeshell)
 	{
-		error("shell protocol command error %04x\n", le16toh(ph->command));
+		error_message("shell protocol command error %04x\n", le16toh(ph->command));
 		send_error();
 		goto handle_error;
 	}
@@ -397,7 +414,7 @@ int handle(char * p, int len)
 				goto handle_error;
 			}
 			connection_state = s_put;
-			if(receive_file(filename) < 0)
+			if(server_receives_file(filename) < 0)
 			{
 				send_error();
 				free(filename);
@@ -445,7 +462,10 @@ handle_error:
 	free(p);
 	return -1;
 }
-
+#endif //!LFMB_CLIENT
+/* FIXME FIXME
+ * clean up this define LFMB_CLIENT stuff, it's inconsistent, all over the place */
+ 
 #ifdef LFMB_CLIENT
 int send_to_shell(char * buffer, int len)
 {
@@ -464,7 +484,7 @@ int send_to_shell(char * buffer, int len)
 	
 	return 0;
 }
-#endif //LFMB_CLIENT
+#else
 
 int read_and_handle_usb(void)
 {
@@ -474,16 +494,17 @@ int read_and_handle_usb(void)
 		return -1;
 	length = le16toh(((struct packethdr *)packet)->length);
 	if(!length || le16toh(((struct packethdr *)packet)->magic) != PACKETHDR_MAGIC)
-		{ error("bad packet\n"); free(packet); return -1; }
+		{ error_message("bad packet\n"); free(packet); return -1; }
 	packet = realloc(packet, length);
 	if(!packet)
-		{ error("packet reallocation failed\n"); return -1; }
+		{ error_message("packet reallocation failed\n"); return -1; }
 	if(usb_ffs_read(packet + sizeof(struct packethdr), length - sizeof(struct packethdr)) < 0)
 		return -1;
 	if(handle(packet, length) < 0)
 		return -1;
 	return 0;
 }
+#endif //LFMB_CLIENT
 
 int send_from_shell(char * buffer, int len)
 {
@@ -523,7 +544,7 @@ int readfd(int fd, char * buffer, int len)
 			p += ret;
 		} 
 		else if (ret == -1)
-			{ error("read error %d err %d\n", fd, errno); return -1; }
+			{ error_message("read error %d err %d\n", fd, errno); return -1; }
 		else
       	{ message("read disconnected %d err %d\n", fd, errno); errno = 0; return 0; }
 	}
@@ -554,7 +575,7 @@ int writefd(int fd, char * buffer, int len)
 			else if(errno == EPIPE)
 				{ message("write disconnected %d err %d\n", fd); errno = 0; return 0; }
 			else
-				{ error("write error %d err %d\n", fd, errno); return -1; }
+				{ error_message("write error %d err %d\n", fd, errno); return -1; }
 		}
 		else
       	{ message("write disconnected %d err %d\n", fd, errno); errno = 0; return 0; }

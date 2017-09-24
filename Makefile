@@ -6,7 +6,7 @@ all: lfmbd
 	cd client; make
 
 .c.o:
-	$(CC) -c $<
+	$(CC) -c -g $<
 
 OBJECTS= message.o \
 		usb_transport.o \
@@ -14,12 +14,15 @@ OBJECTS= message.o \
 		protocol.o \
 		file.o \
 		shell.o \
+		io.o \
 		lfmbd.o
 
 lfmbd: $(OBJECTS)
 	$(CC) -o lfmbd -lutil $(OBJECTS)
 
 clean:
+	-rm lfmb_lipt_in
+	-rm lfmb_lipt_out
 	-rm *.o
 	-rm lfmbd
 	-cd client; make clean

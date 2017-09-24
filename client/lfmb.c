@@ -19,6 +19,7 @@
 
 #include "../file.h"
 #include "../shell.h"
+#include "../io.h"
 
 char * localfile;
 char * remotefile;
@@ -43,6 +44,7 @@ help:
 	
 	localfile = NULL;
 	remotefile = NULL;
+	clear_fds();
 	if(strcmp(argv[1], "shell") == 0)
 	{
 		if(argc > 2)
@@ -57,7 +59,7 @@ help:
 	{
 		if(argc < 3 || argc > 4)
 		{
-			printf("get command requires at least remote file path [remote] [local]");
+			printf("get command requires at least remote file path [remote] [local]\n");
 			goto help;
 		}
 		remotefile = (char *)calloc(1, strlen(argv[2]) + 1);
@@ -83,7 +85,7 @@ help:
 	{
 		if(argc != 4)
 		{
-			printf("put command requires local and remote file path [local] [remote]");
+			printf("put command requires local and remote file path [local] [remote]\n");
 			goto help;
 		}
 		localfile = (char *)calloc(1, strlen(argv[2]) + 1);

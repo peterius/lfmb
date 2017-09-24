@@ -37,7 +37,9 @@
 int transfer_file_from_server(char * remotefile, char * localfile)
 {
 	char * tempfilename;
-	
+	char * command;
+	int ret;
+
 	if(transport_init() < 0)
 		return -1;
 	
@@ -48,10 +50,25 @@ int transfer_file_from_server(char * remotefile, char * localfile)
 	strcpy(tempfilename, TMPFILENAME);
 	if(receive_file(TMPFILENAME) < 0)
 	{
-		//delete the file? FIXME
+		command = calloc(1, strlen(tempfilename) + 6);
+		sprintf(command, "rm -f %s", tempfilename);
+	
+		if((ret = system(command)) != 0)
+			message("%s failed: %d\n", command, ret);
+
+		free(command); 
 		return -1;
 	}
 	//move the tmp file, possibly overwriting
+	
+	
+	command = calloc(1, strlen(tempfilename) + strlen(localfile) + 6);
+	sprintf(command, "mv -f %s %s", tempfilename, localfile);
+	
+	if((ret = system(command)) != 0)
+		message("%s failed: %d\n", command, ret);
+
+	free(command); 
 	
 	//close connection?
 	
@@ -62,18 +79,50 @@ int transfer_file_to_server(char * localfile, char * remotefile)
 {
 	if(transport_init() < 0)
 		return -1;
-	
+	message("transport init complete\n");
 	if(send_put_file(remotefile) < 0)
 		return -1;
-		
+	message("waiting for ack\n");	
 	if(receive_ack() < 0)
 		return -1;
-		
+	message("starting transfer\n");	
 	if(get_file(localfile) < 0)
 		return -1;
-		
+	message("transfer complete\n");		
 	//close connection?
 	
+	return 0;
+}
+#else
+
+int server_receives_file(char * filepath)
+{
+	char * tempfilename;
+	char * command;
+	int ret;
+	
+	tempfilename = calloc(1, sizeof(TMPFILENAME));
+	strcpy(tempfilename, TMPFILENAME);
+	if(receive_file(TMPFILENAME) < 0)
+	{
+		command = calloc(1, strlen(tempfilename) + 6);
+		sprintf(command, "rm -f %s", tempfilename);
+	
+		if((ret = system(command)) != 0)
+			message("%s failed: %d\n", command, ret);
+
+		free(command);
+		return -1;
+	}
+	//move the tmp file, possibly overwriting
+	
+	command = calloc(1, strlen(tempfilename) + strlen(filepath) + 6);
+	sprintf(command, "mv -f %s %s", tempfilename, filepath);
+	
+	if((ret = system(command)) != 0)
+		message("%s failed: %d\n", command, ret);
+
+	free(command); 
 	return 0;
 }
 #endif //LFMB_CLIENT
@@ -88,7 +137,7 @@ int get_file(char * filepath)
 	
 	FILE * fp = fopen(filepath, "r");
 	if(!fp)
-		{ error("Can't open file %s: err %d\n", filepath, errno); return errno; }
+		{ error_message("Can't open file %s: err %d\n", filepath, errno); return errno; }
 	
 	
 	fseek(fp, 0L, SEEK_END);
@@ -105,7 +154,7 @@ int get_file(char * filepath)
 	{
 		bytes = fread(buffer, 1, FILE_TRANSFER_CHUNK, fp);
 		if(bytes != FILE_TRANSFER_CHUNK)
-			{ error("fread error %d err %d\n", bytes, errno); return errno; }
+			{ error_message("fread error %d err %d\n", bytes, errno); return errno; }
 		filesize -= bytes;
 		for(i = 0; i < bytes / 4; i += 4)
 			checksum ^= htole32(((uint32_t *)buffer)[i]);
@@ -115,7 +164,7 @@ int get_file(char * filepath)
 	}
 	bytes = fread(buffer, 1, filesize, fp);
 	if(bytes != filesize)
-		{ error("fread last chunk error %d err %d\n", bytes, errno); return errno; }
+		{ error_message("fread last chunk error %d err %d\n", bytes, errno); return errno; }
 
 	while(bytes % 4 != 0)
 	{
@@ -145,49 +194,49 @@ int receive_file(char * filepath)
 	unsigned int bytes;
 	unsigned int bytes_written;
 	unsigned int bytes_to_write;
-	uint32_t checksum, received_checksum;
+	uint32_t received_checksum;
+	uint32_t checksum = CHECKSUM_IV;
 	unsigned int i;
 	char * buffer;
 	
 	FILE * fp = fopen(filepath, "w");
 	if(!fp)
-		{ error("Can't open temporary file for writing %s: err %d\n", filepath, errno); return errno; }
+		{ error_message("Can't open temporary file for writing %s: err %d\n", filepath, errno); return errno; }
 	
 	receive_filedata_to_follow(&total_filesize);
 	if(!total_filesize)
 		return -1;
 	send_ack();
 	
-	buffer = (char *)malloc(FILE_TRANSFER_CHUNK);
 	filesize = 0;
 	while(filesize < total_filesize)
 	{
 		receive_filedata(&buffer, &bytes);
-		if(bytes == 0)
+		if(bytes == 0 || buffer == NULL)
 			return -1;
 		send_ack();
-		if(filesize + bytes > total_filesize)
+		if(filesize + bytes > total_filesize)		//don't write padding
 			bytes_to_write = total_filesize - filesize;
 		else
 			bytes_to_write = bytes;
 		bytes_written = fwrite(buffer, 1, bytes_to_write, fp);		
 		if(bytes_written != bytes_to_write)
-			{ error("fwrite error %d err %d\n", bytes_written, errno); return errno; }
+			{ error_message("fwrite error %d err %d\n", bytes_written, errno); return errno; }
 		filesize += bytes_to_write;
 		for(i = 0; i < bytes / 4; i += 4)
 			checksum ^= htole32(((uint32_t *)buffer)[i]);
+		free(buffer);
 	}
 	
 	receive_filechecksum(&received_checksum);
 	if(checksum != received_checksum)
 	{
-		error("file transfer checksum failed! %08x %08x\n", checksum, received_checksum);
+		error_message("file transfer checksum failed! %08x %08x\n", checksum, received_checksum);
+		fclose(fp);
 		//delete the temporary file
 		return -1;
 	}
 	send_ack();
-	
-	free(buffer);
 		
 	fclose(fp);
 	return 0;

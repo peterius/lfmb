@@ -17,4 +17,6 @@
 #ifdef LFMB_CLIENT
 int transfer_file_from_server(char * remotefile, char * localfile);
 int transfer_file_to_server(char * localfile, char * remotefile);
+#else
+int server_receives_file(char * filepath);
 #endif //LFMB_CLIENT

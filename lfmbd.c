@@ -25,21 +25,35 @@
 #include "message.h"
 #include "shell.h"
 #include "usb_transport.h"
+#include "io.h"
 
 #define FD_READABLE(x)			(x >= 0 && FD_ISSET(x, &rfd))
+
+void set_set(fd_set * s);
+
+void set_set(fd_set * s)
+{
+	int i;
+	FD_ZERO(s);
+	for(i = 0; i < TOTAL_FDS; i++)
+	{
+		if(fds[i] >= 0)
+			FD_SET(fds[i], s);
+	}
+}
 
 int main(int argc, char ** argv)
 {
 	char * buffer;
 	int bytes;
 	fd_set rfd, wfd, efd;
-	int filedes;
 	int n;
 	
 	term_stdinout_fd = -1;	
 	usb_control_fd = -1;
 	usb_bulkin_fd = -1;
 	usb_bulkout_fd = -1;
+	clear_fds();
 	
 	buffer = malloc(MAX_BUFFER_SIZE);
 	
@@ -48,17 +62,16 @@ int main(int argc, char ** argv)
 
 	while(1)
 	{
-		FD_ZERO(&rfd);
-		FD_SET(filedes, &rfd);
-		FD_ZERO(&efd);
-		FD_SET(filedes, &efd);
-		n = select(filedes, &rfd, NULL, &efd, NULL);
+		set_set(&rfd);
+		set_set(&efd);
+		n = select(high_fd, &rfd, NULL, &efd, NULL);
+		message("n %d\n", n);
 		if(n == -1)
 		{
 			if(errno != EINTR)
 			{
-				error("select error: %d\n", errno);
-				if(transport_init() < 0)
+				error_message("select error: %d\n", errno);
+				if(transport_reset() < 0)
 					{ free(buffer); return -1; }
 			}
 		}
@@ -68,12 +81,12 @@ int main(int argc, char ** argv)
 			{
 				bytes = read(term_stdinout_fd, buffer, MAX_BUFFER_SIZE);
 				if(bytes < 0)
-					error("shell stdinout read error: %d\n", errno);
+					error_message("shell stdinout read error: %d\n", errno);
 				else 
 				{
 					if(send_from_shell(buffer, bytes) < 0)
 					{
-						if(transport_init() < 0)
+						if(transport_reset() < 0)
 							{ free(buffer); return -1; }
 						//but then what, we just never send this data?
 						//maybe this should be fatal... FIXME
@@ -85,11 +98,12 @@ int main(int argc, char ** argv)
 				// what would this be, something from the driver?
 				message("usb control is readable\n");
 			}
-			if(FD_READABLE(usb_bulkin_fd))
+			if(FD_READABLE(usb_bulkout_fd))
 			{
+				message("bulkout is readable\n");
 				if(read_and_handle_usb() < 0)
 				{
-					if(transport_init() < 0)
+					if(transport_reset() < 0)
 						{ free(buffer); return -1; }
 				}
 			}

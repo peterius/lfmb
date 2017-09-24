@@ -52,6 +52,7 @@ struct packethdr
 	unsigned short length;
 } __attribute__((packed));
 
+int transport_reset(void);
 int transport_init(void);
 #ifdef LFMB_CLIENT
 int send_get_file(char * remotefile);
@@ -70,7 +71,9 @@ int receive_ack(void);
 #ifdef LFMB_CLIENT
 int send_to_shell(char * buffer, int len);
 #endif //LFMB_CLIENT
+#ifndef LFMB_CLIENT
 int read_and_handle_usb(void);
+#endif //!LFMB_CLIENT
 int send_from_shell(char * buffer, int len);
 int readfd(int fd, char * buffer, int len);
 int writefd(int fd, char * buffer, int len);

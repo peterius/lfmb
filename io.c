@@ -14,27 +14,44 @@
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>. */
 
-#include <stdio.h>
-#include <stdarg.h>
-#include "message.h"
+#include <fcntl.h>
+#include <errno.h>
+#include "io.h"
 
-//same for now FIXME
-int error_message(const char * format, ...)
+int high_fd;
+int fds[TOTAL_FDS];
+
+void set_high_fd(void)
 {
-	int ret;
-	va_list args;
-	va_start(args, format);
-	ret = vfprintf(stderr, format, args);
-	va_end(args);
-	return ret;
+	int i;
+	high_fd = 0;
+	for(i = 0; i < TOTAL_FDS; i++)
+	{
+		if(fds[i] > high_fd)
+			high_fd = fds[i];
+	}
+	high_fd++;
 }
 
-int message(const char * format, ...)
+void clear_fds(void)
 {
-	int ret;
-	va_list args;
-	va_start(args, format);
-	ret = vfprintf(stderr, format, args);
-	va_end(args);
-	return ret;
+	int i;
+	for(i = 0; i < TOTAL_FDS; i++)
+		fds[i] = -1;
+}
+
+void set_non_blocking(void)
+{
+	int i;
+	int flags;
+	for(i = 0; i < TOTAL_FDS; i++)
+	{
+		if(fds[i] < 0)
+			continue;
+		flags = fcntl(fds[i], F_GETFL, 0);
+		flags |= O_NONBLOCK;
+		if(fcntl(fds[i], F_SETFL, flags) != 0)
+			error_message("Can't set file descriptor to non blocking %d err: %d\n", fds[i], errno);			//fatal?
+		message("fd %d set non block\n", fds[i]);
+	}
 }

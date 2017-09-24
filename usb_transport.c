@@ -21,6 +21,7 @@
 
 #include "usb_ffs.h"
 #include "message.h"
+#include "io.h"
 
 #define USB_FFS_CONTROL				"/dev/usb-ffs/lfmb/ep0"
 #define USB_FFS_BULKIN				"/dev/usb-ffs/lfmb/ep1"
@@ -39,55 +40,66 @@ int usb_init(void)
 	
 	usb_control_fd = open(USB_FFS_CONTROL, O_RDWR);
 	if(usb_control_fd < 0)
-		{ error("Can't open usb control err:%d\n", errno); goto usb_init_err; }
+		{ error_message("Can't open usb control err:%d\n", errno); goto usb_init_err; }
 		
 	if(write(usb_control_fd, &descriptors, sizeof(descriptors)) < 0)
-		{ error("Writing descriptors to usb control failed err: %d\n", errno); goto usb_init_err; }
+		{ error_message("Writing descriptors to usb control failed err: %d\n", errno); goto usb_init_err; }
 	
 	if(write(usb_control_fd, &strings, sizeof(strings)) < 0)
-		{ error("Writing strings to usb control failed err: %d\n", errno); goto usb_init_err; }
+		{ error_message("Writing strings to usb control failed err: %d\n", errno); goto usb_init_err; }
 	usb_bulkin_fd = open(USB_FFS_BULKIN, O_RDWR);
 	if(usb_bulkin_fd < 0)
-		{ error("Can't open usb bulk in err:%d\n", errno); goto usb_init_err; }
+		{ error_message("Can't open usb bulk in err:%d\n", errno); goto usb_init_err; }
 	usb_bulkout_fd = open(USB_FFS_BULKOUT, O_RDWR);
 	if(usb_bulkout_fd < 0)
-		{ error("Can't open usb bulk out err:%d\n", errno); goto usb_init_err; }
+		{ error_message("Can't open usb bulk out err:%d\n", errno); goto usb_init_err; }
 #else
-	mknod("lfmb_lipt_in", S_IFIFO | 0666, 0);
-	mknod("lfmb_lipt_out", S_IFIFO | 0666, 0);
+	mknod("/tmp/lfmb_lipt_in", S_IFIFO | 0666, 0);
+	mknod("/tmp/lfmb_lipt_out", S_IFIFO | 0666, 0);
 #ifndef LFMB_CLIENT
-	usb_bulkin_fd = open("lfmb_lipt_in", O_RDWR);
+	usb_bulkin_fd = open("/tmp/lfmb_lipt_in", O_RDWR);
 #else
-	usb_bulkin_fd = open("lfmb_lipt_out", O_RDWR);
+	usb_bulkin_fd = open("/tmp/lfmb_lipt_out", O_RDWR);
 #endif //!LFMB_CLIENT
 	if(usb_bulkin_fd < 0)
-		{ error("Can't open local ipc protocol test bulk in err:%d\n", errno); goto usb_init_err; }
+		{ error_message("Can't open local ipc protocol test bulk in err:%d\n", errno); goto usb_init_err; }
 #ifndef LFMB_CLIENT
-	usb_bulkout_fd = open("lfmb_lipt_out", O_RDWR);
+	usb_bulkout_fd = open("/tmp/lfmb_lipt_out", O_RDWR);
 #else
-	usb_bulkout_fd = open("lfmb_lipt_in", O_RDWR);
+	usb_bulkout_fd = open("/tmp/lfmb_lipt_in", O_RDWR);
 #endif //!LFMB_CLIENT
 	if(usb_bulkout_fd < 0)
-		{ error("Can't open local ipc protocol test bulk out err:%d\n", errno); goto usb_init_err; }
-
-#endif //!LOCAL_IPC_PROTOCOL_TEST
+		{ error_message("Can't open local ipc protocol test bulk out err:%d\n", errno); goto usb_init_err; }
+		
+#endif //!LOCAL_IPC_PROTOCOL_TEST	
+	fds[0] = usb_control_fd;
+	fds[1] = usb_bulkin_fd;
+	fds[2] = usb_bulkout_fd;
+	set_high_fd();
+#ifndef LFMB_CLIENT
+	set_non_blocking();
+#endif //LFMB_CLIENT
 	return 0;
 usb_init_err:
-	if(usb_control_fd > 0)
+	if(usb_control_fd >= 0)
 	{		
 		close(usb_control_fd);
 		usb_control_fd = -1;
 	}
-	if(usb_bulkin_fd > 0)
+	if(usb_bulkin_fd >= 0)
 	{		
 		close(usb_bulkin_fd);
 		usb_bulkin_fd = -1;
 	}
-	if(usb_bulkout_fd > 0)
+	if(usb_bulkout_fd >= 0)
 	{		
 		close(usb_bulkout_fd);
 		usb_bulkout_fd = -1;
 	}
+	fds[0] = usb_control_fd;
+	fds[1] = usb_bulkin_fd;
+	fds[2] = usb_bulkout_fd;
+	set_high_fd();
 	return -1;
 }
 
@@ -98,14 +110,14 @@ int usb_ffs_write(const void * data, int len)
 
 	while (count < len)
 	{
-		ret = read(usb_bulkin_fd, data + count, len - count);
+		ret = write(usb_bulkin_fd, data + count, len - count);
 		if (ret < 0)
 		{
 			if (errno != EINTR)
-				{ error("usb ffs write failed fd %d length %d count %d\n", usb_bulkin_fd, len, count); return ret; }
-			else
-				count += ret;
+				{ error_message("usb ffs write failed fd %d length %d count %d\n", usb_bulkin_fd, len, count); return ret; }
 		}
+		else
+			count += ret;
 	}
 
 	message("usb ffs write done\n");
@@ -122,11 +134,11 @@ int usb_ffs_read(void * data, int len)
 		ret = read(usb_bulkout_fd, data + count, len - count);
 		if (ret < 0)
 		{
-			if (errno != EINTR)
-				{ error("usb ffs read failed fd %d length %d count %d\n", usb_bulkout_fd, len, count); return ret; }
-			else
-				count += ret;
+			if (errno != EINTR && errno != EWOULDBLOCK)
+				{ error_message("usb ffs read failed fd %d length %d count %d\n", usb_bulkout_fd, len, count); return ret; }
 		}
+		else
+			count += ret;
 	}
 
 	return count;
@@ -138,22 +150,31 @@ void usb_ffs_kick(void)
 #ifndef LOCAL_IPC_PROTOCOL_TEST
 	err = ioctl(usb_bulkin_fd, FUNCTIONFS_CLEAR_HALT);
 	if (err < 0)
-		error("usb kick source fd %d clear halt failed err %d", usb_bulkin_fd, errno);
+		error_message("usb kick source fd %d clear halt failed err %d", usb_bulkin_fd, errno);
 
 	err = ioctl(usb_bulkout_fd, FUNCTIONFS_CLEAR_HALT);
 	if (err < 0)
-		error("usb kick sink fd %d clear halt failed err %d", usb_bulkout_fd, errno);
+		error_message("usb kick sink fd %d clear halt failed err %d", usb_bulkout_fd, errno);
 #else
-	error("reseting io\n");
+	error_message("reseting io\n");
 #endif //!LOCAL_IPC_PROTOCOL_TEST
 
 
-	close(usb_control_fd);
+	// FIXME are we supposed to close control also?  barely matters but, maybe
+	// there's a more graceful kind of reset... 
+	if(usb_control_fd >= 0)
+		close(usb_control_fd);
    usb_control_fd = -1;
-	close(usb_bulkin_fd);
+	if(usb_bulkin_fd >= 0)
+		close(usb_bulkin_fd);
 	usb_bulkin_fd = -1;
-	close(usb_bulkout_fd);
+	if(usb_bulkout_fd >= 0)
+		close(usb_bulkout_fd);
 	usb_bulkout_fd = -1;
+	fds[0] = usb_control_fd;
+	fds[1] = usb_bulkin_fd;
+	fds[2] = usb_bulkout_fd;
+	set_high_fd();
 }
 
 void usb_reset(void)
@@ -161,7 +182,7 @@ void usb_reset(void)
 	usb_ffs_kick();
 	if(usb_init() < 0)
 	{
-		error("usb failed to reinitialize\n");
+		error_message("usb failed to reinitialize\n");
 		// probably fatal?
 	}
 }

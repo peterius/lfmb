@@ -14,27 +14,11 @@
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>. */
 
-#include <stdio.h>
-#include <stdarg.h>
-#include "message.h"
+#define TOTAL_FDS						4
 
-//same for now FIXME
-int error_message(const char * format, ...)
-{
-	int ret;
-	va_list args;
-	va_start(args, format);
-	ret = vfprintf(stderr, format, args);
-	va_end(args);
-	return ret;
-}
+extern int high_fd;
+extern int fds[TOTAL_FDS];
 
-int message(const char * format, ...)
-{
-	int ret;
-	va_list args;
-	va_start(args, format);
-	ret = vfprintf(stderr, format, args);
-	va_end(args);
-	return ret;
-}
+void set_high_fd(void);
+void clear_fds(void);
+void set_non_blocking(void);

@@ -21,6 +21,7 @@
 #include <errno.h>
 #include "message.h"
 #include "shell.h"
+#include "io.h"
  
 #define SHELL_PATH		"/bin/bash"
 
@@ -35,9 +36,11 @@ int init_terminal(void)
 	//FIXME
 	
 	pid_t pid = forkpty(&term_stdinout_fd, NULL, NULL, NULL);
+	fds[3] = term_stdinout_fd;
+	set_high_fd();
  	if(pid < 0)
  	{
- 		error("failed to fork terminal err %d\n", errno);
+ 		error_message("failed to fork terminal err %d\n", errno);
  		return -1;
  	}
  	else if(pid == 0)
@@ -67,12 +70,14 @@ int open_shell(void)
 		return -1;
 	//do we set the connection state here to s_shell for the client or do we care ? FIXME
 	
+	set_non_blocking();
+	
 	inbuffer = (char *)malloc(MAX_BUFFER_SIZE);
 	while(1)
 	{	
 		if(read_from_shell(&buffer, &size) < 0)
 		{
-			error("read from shell error\n");
+			error_message("read from shell error\n");
 		}
 		if(buffer)
 		{
@@ -99,7 +104,7 @@ int open_shell(void)
 			}
 			else
 			{
-				error("read stdin error %d\n", errno);
+				error_message("read stdin error %d\n", errno);
 			}	
 		}
 		//SIGHUP ?  exit?
