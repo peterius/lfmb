@@ -16,6 +16,7 @@
  
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <pty.h>
 #include <errno.h>
@@ -24,6 +25,11 @@
 #include "io.h"
  
 #define SHELL_PATH		"/bin/bash"
+
+#define ENV_STRINGS		2
+#define TERM_STRING		"TERM=linux"
+#define HOME_STRING		"HOME=/home"
+
 
 int term_stdinout_fd;
 int terminal_pid;
@@ -37,9 +43,7 @@ void terminal_restore(int fd);
 int init_terminal(void)
 {
 	char ** env;
-	
-	//probably should load an env VAR=value file into env, just a bunch of strings
-	//FIXME
+	int i;
 	
 	terminal_pid = (int)forkpty(&term_stdinout_fd, NULL, NULL, NULL);
 	fds[3] = term_stdinout_fd;
@@ -51,6 +55,13 @@ int init_terminal(void)
  	}
  	else if(terminal_pid == 0)
  	{
+ 		env = (char **)malloc((ENV_STRINGS + 1) * sizeof(char *));
+ 		env[0] = (char *)calloc(1, sizeof(TERM_STRING) + 1);
+ 		strcpy(env[0], TERM_STRING);
+ 		env[1] = (char *)calloc(1, sizeof(HOME_STRING) + 1);
+ 		strcpy(env[1], HOME_STRING);
+		env[2] = NULL;
+		 		
  		dup2(term_stdinout_fd, STDIN_FILENO);
  		dup2(term_stdinout_fd, STDOUT_FILENO);
  		dup2(term_stdinout_fd, STDERR_FILENO);
@@ -58,6 +69,10 @@ int init_terminal(void)
  		terminal_set(term_stdinout_fd);
  		execle(SHELL_PATH, SHELL_PATH, "-", NULL, env);
  		terminal_restore(term_stdinout_fd);
+ 		
+ 		for(i = 0; i < ENV_STRINGS; i++)
+ 			free(env[i]);
+ 		free(env);
  		exit(0);
  	}
  	
