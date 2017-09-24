@@ -310,7 +310,7 @@ int send_ack(void)
 	if(usb_ffs_write(packet, sizeof(struct packethdr) + 4) < 0)
 		{ free(packet); return -1; }
 	last_size = 0;
-	message("sent ack\n");
+
 	free(packet);
 	return 0;
 }
