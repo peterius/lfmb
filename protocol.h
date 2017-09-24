@@ -28,7 +28,7 @@ enum protocol_command
 	c_connect = 0,
 	c_accept = 1,
 	c_openshell = 2,
-	c_closeshell = 3,
+	c_disconnect = 3,
 	c_getfile = 4,
 	c_putfile = 5,
 	c_filesize = 6,
@@ -59,6 +59,7 @@ int send_get_file(char * remotefile);
 int send_put_file(char * remotefile);
 int send_open_shell(void);
 #endif //LFMB_CLIENT
+int send_disconnect(void);
 int send_filedata_to_follow(unsigned int filesize);
 int send_filedata(char * buffer, unsigned int bytes);
 int send_filechecksum(uint32_t checksum);
@@ -70,6 +71,7 @@ int send_error(void);
 int receive_ack(void);
 #ifdef LFMB_CLIENT
 int send_to_shell(char * buffer, int len);
+int read_from_shell(void);
 #endif //LFMB_CLIENT
 #ifndef LFMB_CLIENT
 int read_and_handle_usb(void);

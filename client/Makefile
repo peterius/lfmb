@@ -14,13 +14,13 @@ protocol.o: ../protocol.c ../protocol.h ../usb_transport.h ../shell.h
 	$(CC) -c $(DEFINES) ../protocol.c
 usb_transport.o: ../usb_transport.c ../usb_transport.h ../usb_ffs.h ../message.h
 	$(CC) -c $(DEFINES) ../usb_transport.c
-usb_ffs.o:
+usb_ffs.o: ../usb_ffs.c ../usb_ffs.h
 	$(CC) -c $(DEFINES) ../usb_ffs.c
-message.o:
+message.o: ../message.c ../message.h
 	$(CC) -c $(DEFINES) ../message.c
-shell.o:
+shell.o: ../shell.c ../shell.h
 	$(CC) -c $(DEFINES) ../shell.c
-io.o:
+io.o: ../io.c ../io.h
 	$(CC) -c $(DEFINES) ../io.c
 
 OBJECTS= protocol.o \

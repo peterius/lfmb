@@ -55,6 +55,7 @@ int transport_reset(void)
 
 int transport_init(void)
 {
+	last_size = 0;
 	if(fds[1] < 0)
 	{
 		if(usb_init() < 0)
@@ -70,11 +71,6 @@ int transport_init(void)
 	// if we're server we can't be sending stuff yet 
 	// because maybe nothing is connected
 	return 0;
-}
-
-int send_disconnect(void)
-{
-
 }
 
 #ifdef LFMB_CLIENT
@@ -176,6 +172,28 @@ int send_open_shell(void)
 #else
 
 #endif //LFMB_CLIENT
+
+//server and client can send:
+int send_disconnect(void)
+{
+	char * packet = calloc(1, sizeof(struct packethdr));
+	struct packethdr * ph = (struct packethdr *)packet;
+	
+	ph->magic = htole16(PACKETHDR_MAGIC);
+	ph->command = htole16((unsigned short)c_disconnect);
+	last_size = sizeof(struct packethdr);
+	ph->length = htole16(last_size);
+
+	if(usb_ffs_write(packet, last_size) < 0)
+		{ free(packet); return -1; }
+	
+	free(packet);
+	
+	connection_state = s_no_connection;
+	last_size = 0;
+
+	return 0;
+}
 
 int send_filedata_to_follow(unsigned int filesize)
 {
@@ -358,7 +376,7 @@ int handle(char * p, int len)
 		goto handle_error;
 	}
 	else if(connection_state == s_shell && le16toh(ph->command) != (enum protocol_command)c_toshell && 
-					le16toh(ph->command) != (enum protocol_command)c_closeshell)
+					le16toh(ph->command) != (enum protocol_command)c_disconnect)
 	{
 		error_message("shell protocol command error %04x\n", le16toh(ph->command));
 		send_error();
@@ -428,10 +446,16 @@ int handle(char * p, int len)
 				send_error();
 				goto handle_error;
 			}
+			if(init_terminal() < 0)
+			{
+				send_error();
+				goto handle_error;
+			}
 			connection_state = s_shell;
 			break;
-		case c_closeshell:
+		case c_disconnect:
 			// FIXME close gracefully
+			//how do we kill our terminal? if we get this from client?
 			connection_state = s_no_connection;
 			break;
 		case c_toshell:
@@ -482,6 +506,8 @@ int send_to_shell(char * buffer, int len)
 		return -1;
 	last_size = sizeof(struct packethdr) + len;
 	
+	if(receive_ack() < 0)
+		return -1;
 	return 0;
 }
 #else
@@ -520,14 +546,43 @@ int send_from_shell(char * buffer, int len)
 	if(usb_ffs_write(buffer, len) < 0)
 		return -1;
 	last_size = sizeof(struct packethdr) + len;
-	
 	return 0;
 }
 
-int read_from_shell(char ** buffer, int * len)
+#ifdef LFMB_CLIENT
+int read_from_shell(void)
 {
-	
+	unsigned short length;
+	enum protocol_command command;
+	char * packet = malloc(sizeof(struct packethdr));
+	if(usb_ffs_read(packet, sizeof(struct packethdr)) < 0)
+		return -1;
+	length = le16toh(((struct packethdr *)packet)->length);
+	if(!length || le16toh(((struct packethdr *)packet)->magic) != PACKETHDR_MAGIC)
+		{ error_message("bad packet\n"); free(packet); return -1; }
+	command = (enum protocol_command)le16toh(((struct packethdr *)packet)->command);
+	free(packet);	
+	if(command == c_disconnect)
+	{
+		fds[2] = -1;			//close the bulkout to signal the disconnect to caller
+		return -1;
+	}
+	else if(command == c_fromshell)
+	{
+		length -= sizeof(struct packethdr);
+		packet = malloc(length);
+		if(usb_ffs_read(packet, length) < 0)
+			return -1;
+		if(receive_shell_from_server(packet, length) < 0)
+		{
+			return -1;
+		}
+	}
+	else
+		{ error_message("bad shell command %04x\n", command); return -1; }
+	return 0;
 }
+#endif //LFMB_CLIENT
 
 int readfd(int fd, char * buffer, int len)
 {

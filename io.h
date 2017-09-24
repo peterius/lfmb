@@ -22,3 +22,4 @@ extern int fds[TOTAL_FDS];
 void set_high_fd(void);
 void clear_fds(void);
 void set_non_blocking(void);
+int select_loop(void);

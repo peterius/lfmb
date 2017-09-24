@@ -120,7 +120,6 @@ int usb_ffs_write(const void * data, int len)
 			count += ret;
 	}
 
-	message("usb ffs write done\n");
 	return count;
 }
 

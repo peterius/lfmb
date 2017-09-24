@@ -24,6 +24,9 @@
 char * localfile;
 char * remotefile;
 
+/* FIXME FIXME sigint  for shell send_close_shell 
+ * and what about for the files, to send a close ?!? */
+
 int main(int argc, char ** argv)
 {
 	char * p;

@@ -18,8 +18,11 @@
 #define MAX_BUFFER_SIZE			4096
 
 extern int term_stdinout_fd;
+extern int terminal_pid;
+
 #ifdef LFMB_CLIENT
 int open_shell(void);
+int receive_shell_from_server(char * buffer, int len);
 #else
 int init_terminal(void);
 #endif //LFMB_CLIENT

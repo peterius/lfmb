@@ -26,6 +26,12 @@
 #define SHELL_PATH		"/bin/bash"
 
 int term_stdinout_fd;
+int terminal_pid;
+
+struct termios terminal_state;
+
+void terminal_set(int fd);
+void terminal_restore(int fd);
 
 #ifndef LFMB_CLIENT
 int init_terminal(void)
@@ -35,84 +41,78 @@ int init_terminal(void)
 	//probably should load an env VAR=value file into env, just a bunch of strings
 	//FIXME
 	
-	pid_t pid = forkpty(&term_stdinout_fd, NULL, NULL, NULL);
+	terminal_pid = (int)forkpty(&term_stdinout_fd, NULL, NULL, NULL);
 	fds[3] = term_stdinout_fd;
 	set_high_fd();
- 	if(pid < 0)
+ 	if(terminal_pid < 0)
  	{
  		error_message("failed to fork terminal err %d\n", errno);
  		return -1;
  	}
- 	else if(pid == 0)
+ 	else if(terminal_pid == 0)
  	{
  		dup2(term_stdinout_fd, STDIN_FILENO);
  		dup2(term_stdinout_fd, STDOUT_FILENO);
  		dup2(term_stdinout_fd, STDERR_FILENO);
  		
+ 		terminal_set(term_stdinout_fd);
  		execle(SHELL_PATH, SHELL_PATH, "-", NULL, env);
- 		
+ 		terminal_restore(term_stdinout_fd);
  		exit(0);
  	}
  	
  	return 0;
 }
 #else
+
 int open_shell(void)
 {
-	char * buffer;
-	char * inbuffer;
-	unsigned int size;
-	int ret;
+	terminal_set(STDIN_FILENO);
 	
-	if(send_open_shell() < 0)
+	if(select_loop() < 0)
+		return -1;	
+	
+	//SIGHUP ?  exit?
+
+	terminal_restore(STDIN_FILENO);
+
+	return 0;
+}
+
+int receive_shell_from_server(char * buffer, int len)
+{
+	//how can we check here for exit/logout command... or do we send it?
+	if(writefd(STDOUT_FILENO, buffer, len) < 0)
+	{
+		free(buffer);
 		return -1;
-	if(receive_ack() < 0)
-		return -1;
-	//do we set the connection state here to s_shell for the client or do we care ? FIXME
-	
-	set_non_blocking();
-	
-	inbuffer = (char *)malloc(MAX_BUFFER_SIZE);
-	while(1)
-	{	
-		if(read_from_shell(&buffer, &size) < 0)
-		{
-			error_message("read from shell error\n");
-		}
-		if(buffer)
-		{
-			if(writefd(STDOUT_FILENO, buffer, size) < 0)
-			{
-				free(buffer);
-			}
-			//free(buffer);
-		}
-		ret = read(STDIN_FILENO, inbuffer, MAX_BUFFER_SIZE);
-		if(ret > 0)
-		{
-			//how can we check here for exit/logout command... or do we send it?
-			if(send_to_shell(inbuffer, ret) < 0)
-			{
-				
-			}
-		}
-		else if(ret < 0)
-		{
-			if(errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
-			{
-				message("EAGAIN/EWOULDBLOCK/EINTR\n");
-			}
-			else
-			{
-				error_message("read stdin error %d\n", errno);
-			}	
-		}
-		//SIGHUP ?  exit?
 	}
-	
-	free(inbuffer);
-	
 	return 0;
 }
 #endif //LFMB_CLIENT
+
+void terminal_set(int fd)
+{
+    if(tcgetattr(fd, &terminal_state))
+    	return;
+
+    struct termios tio;
+    if (tcgetattr(fd, &tio))
+    	return;
+
+    cfmakeraw(&tio);
+
+    tio.c_cc[VTIME] = 0;			//tenths of a second between bytes
+    tio.c_cc[VMIN] = 1;				//minimum characters
+
+    tcsetattr(fd, TCSAFLUSH, &tio);
+}
+
+void terminal_restore(int fd)
+{
+    tcsetattr(fd, TCSAFLUSH, &terminal_state);
+}
+
+
+
 
