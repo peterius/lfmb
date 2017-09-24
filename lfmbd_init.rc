@@ -1,0 +1,4 @@
+#FIXME
+mkdir /dev/usb-ffs 0770 shell shell
+mkdir /dev/usb-ffs/lfmb 0770 shell shell
+mount functionfs lfmb /dev/usb-ffs/lfmb uid=2000,gid=2000
