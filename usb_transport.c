@@ -26,12 +26,15 @@
 #define USB_FFS_BULKIN				"/dev/usb-ffs/lfmb/ep1"
 #define USB_FFS_BULKOUT				"/dev/usb-ffs/lfmb/ep2"
 
+#define LOCAL_IPC_PROTOCOL_TEST
+
 int usb_control_fd, usb_bulkin_fd, usb_bulkout_fd;
 
 void usb_ffs_kick(void);
 
 int usb_init(void)
 {
+#ifndef LOCAL_IPC_PROTOCOL_TEST
 	fill_descriptors_strings();
 	
 	usb_control_fd = open(USB_FFS_CONTROL, O_RDWR);
@@ -43,13 +46,31 @@ int usb_init(void)
 	
 	if(write(usb_control_fd, &strings, sizeof(strings)) < 0)
 		{ error("Writing strings to usb control failed err: %d\n", errno); goto usb_init_err; }
-	
 	usb_bulkin_fd = open(USB_FFS_BULKIN, O_RDWR);
 	if(usb_bulkin_fd < 0)
 		{ error("Can't open usb bulk in err:%d\n", errno); goto usb_init_err; }
 	usb_bulkout_fd = open(USB_FFS_BULKOUT, O_RDWR);
 	if(usb_bulkout_fd < 0)
 		{ error("Can't open usb bulk out err:%d\n", errno); goto usb_init_err; }
+#else
+	mknod("lfmb_lipt_in", S_IFIFO | 0666, 0);
+	mknod("lfmb_lipt_out", S_IFIFO | 0666, 0);
+#ifndef LFMB_CLIENT
+	usb_bulkin_fd = open("lfmb_lipt_in", O_RDWR);
+#else
+	usb_bulkin_fd = open("lfmb_lipt_out", O_RDWR);
+#endif //!LFMB_CLIENT
+	if(usb_bulkin_fd < 0)
+		{ error("Can't open local ipc protocol test bulk in err:%d\n", errno); goto usb_init_err; }
+#ifndef LFMB_CLIENT
+	usb_bulkout_fd = open("lfmb_lipt_out", O_RDWR);
+#else
+	usb_bulkout_fd = open("lfmb_lipt_in", O_RDWR);
+#endif //!LFMB_CLIENT
+	if(usb_bulkout_fd < 0)
+		{ error("Can't open local ipc protocol test bulk out err:%d\n", errno); goto usb_init_err; }
+
+#endif //!LOCAL_IPC_PROTOCOL_TEST
 	return 0;
 usb_init_err:
 	if(usb_control_fd > 0)
@@ -114,7 +135,7 @@ int usb_ffs_read(void * data, int len)
 void usb_ffs_kick(void)
 {
 	int err;
-
+#ifndef LOCAL_IPC_PROTOCOL_TEST
 	err = ioctl(usb_bulkin_fd, FUNCTIONFS_CLEAR_HALT);
 	if (err < 0)
 		error("usb kick source fd %d clear halt failed err %d", usb_bulkin_fd, errno);
@@ -122,6 +143,9 @@ void usb_ffs_kick(void)
 	err = ioctl(usb_bulkout_fd, FUNCTIONFS_CLEAR_HALT);
 	if (err < 0)
 		error("usb kick sink fd %d clear halt failed err %d", usb_bulkout_fd, errno);
+#else
+	error("reseting io\n");
+#endif //!LOCAL_IPC_PROTOCOL_TEST
 
 
 	close(usb_control_fd);
