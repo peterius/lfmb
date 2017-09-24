@@ -21,8 +21,8 @@ lfmbd: $(OBJECTS)
 	$(CC) -o lfmbd -lutil $(OBJECTS)
 
 clean:
-	-rm lfmb_lipt_in
-	-rm lfmb_lipt_out
+	-rm /tmp/lfmb_lipt_in
+	-rm /tmp/lfmb_lipt_out
 	-rm *.o
 	-rm lfmbd
 	-cd client; make clean
