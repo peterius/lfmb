@@ -41,7 +41,7 @@ int transfer_file_from_server(char * remotefile, char * localfile)
 	int ret;
 
 	if(transport_init() < 0)
-		return -1;
+		{ error_message("Failed to establish usb connection\n"); return -1; }
 	
 	if(send_get_file(remotefile) < 0)
 		return -1;

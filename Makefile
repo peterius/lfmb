@@ -6,7 +6,7 @@ all: lfmbd
 	cd client; make
 
 .c.o:
-	$(CC) -c -g $<
+	$(CC) -c $<
 
 OBJECTS= message.o \
 		usb_transport.o \

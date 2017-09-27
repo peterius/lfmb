@@ -18,9 +18,12 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <sys/wait.h>
 #include "io.h"
 #include "shell.h"
 #include "usb_transport.h"
+#include "message.h"
+#include "protocol.h"
 
 int high_fd;
 int fds[TOTAL_FDS];

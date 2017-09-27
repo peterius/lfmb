@@ -18,7 +18,13 @@
 #include <stdint.h>
 #include <fcntl.h>
 #include <errno.h>
-
+#ifdef LFMB_CLIENT
+#define HAS_LIBUSB
+#endif //LFMB_CLIENT
+#ifdef HAS_LIBUSB
+#include <libusb.h>
+#include <poll.h>
+#endif //HAS_LIBUSB
 #include "usb_ffs.h"
 #include "message.h"
 #include "io.h"
@@ -27,51 +33,59 @@
 #define USB_FFS_BULKIN				"/dev/usb-ffs/lfmb/ep1"
 #define USB_FFS_BULKOUT				"/dev/usb-ffs/lfmb/ep2"
 
-#define LOCAL_IPC_PROTOCOL_TEST
+int usb_ffs;
+#ifdef HAS_LIBUSB
+/* All these init values are only going to work for the client... FIXME */
+int interfaceIndex = -1;
+int usb_libusb_detacheddriver = 0;
+struct libusb_context * libusbContext = NULL;
+struct libusb_device_handle * ourDeviceHandle = NULL;
+struct libusb_device * ourDevice = NULL;
+int libusb_inEndpoint;
+int libusb_outEndpoint;
+const struct libusb_pollfd ** libusb_pollfd_list = NULL;
+#endif //HAS_LIBUSB
+
+//#define LOCAL_IPC_PROTOCOL_TEST
 
 int usb_control_fd, usb_bulkin_fd, usb_bulkout_fd;
 
+#ifdef HAS_LIBUSB
+int usb_libusb_init(void);
+int find_usb_device(void);
+int claim_interface(void);
+void usb_libusb_cleanup(void);
+#endif //HAS_LIBUSB
+int local_ipc_protocol_test(void);
+int usb_ffs_init(void);
+int usb_ffs_write(const void * data, int len);
+int usb_ffs_read(void * data, int len);
 void usb_ffs_kick(void);
 
 int usb_init(void)
 {
-#ifndef LOCAL_IPC_PROTOCOL_TEST
-	fill_descriptors_strings();
-	
-	usb_control_fd = open(USB_FFS_CONTROL, O_RDWR);
-	if(usb_control_fd < 0)
-		{ error_message("Can't open usb control err:%d\n", errno); goto usb_init_err; }
-		
-	if(write(usb_control_fd, &descriptors, sizeof(descriptors)) < 0)
-		{ error_message("Writing descriptors to usb control failed err: %d\n", errno); goto usb_init_err; }
-	
-	if(write(usb_control_fd, &strings, sizeof(strings)) < 0)
-		{ error_message("Writing strings to usb control failed err: %d\n", errno); goto usb_init_err; }
-	usb_bulkin_fd = open(USB_FFS_BULKIN, O_RDWR);
-	if(usb_bulkin_fd < 0)
-		{ error_message("Can't open usb bulk in err:%d\n", errno); goto usb_init_err; }
-	usb_bulkout_fd = open(USB_FFS_BULKOUT, O_RDWR);
-	if(usb_bulkout_fd < 0)
-		{ error_message("Can't open usb bulk out err:%d\n", errno); goto usb_init_err; }
+#ifdef LOCAL_IPC_PROTOCOL_TEST
+	if(local_ipc_protocol_test() < 0)
+		goto usb_init_err;
+	usb_ffs = 1;		//for the read/write with fd
 #else
-	mknod("/tmp/lfmb_lipt_in", S_IFIFO | 0666, 0);
-	mknod("/tmp/lfmb_lipt_out", S_IFIFO | 0666, 0);
-#ifndef LFMB_CLIENT
-	usb_bulkin_fd = open("/tmp/lfmb_lipt_in", O_RDWR);
+	if(access(USB_FFS_CONTROL, F_OK) == 0)
+	{
+		if(usb_ffs_init() < 0)
+			goto usb_init_err;
+		usb_ffs = 1;
+	}
+	else
+	{
+#ifdef HAS_LIBUSB
+		if(usb_libusb_init() < 0)
+			goto usb_init_err;
 #else
-	usb_bulkin_fd = open("/tmp/lfmb_lipt_out", O_RDWR);
-#endif //!LFMB_CLIENT
-	if(usb_bulkin_fd < 0)
-		{ error_message("Can't open local ipc protocol test bulk in err:%d\n", errno); goto usb_init_err; }
-#ifndef LFMB_CLIENT
-	usb_bulkout_fd = open("/tmp/lfmb_lipt_out", O_RDWR);
-#else
-	usb_bulkout_fd = open("/tmp/lfmb_lipt_in", O_RDWR);
-#endif //!LFMB_CLIENT
-	if(usb_bulkout_fd < 0)
-		{ error_message("Can't open local ipc protocol test bulk out err:%d\n", errno); goto usb_init_err; }
-		
-#endif //!LOCAL_IPC_PROTOCOL_TEST	
+		goto usb_init_err;
+#endif //HAS_LIBUSB
+		usb_ffs = 0;
+	}
+#endif //LOCAL_IP_PROTOCOL_TEST
 	fds[0] = usb_control_fd;
 	fds[1] = usb_bulkin_fd;
 	fds[2] = usb_bulkout_fd;
@@ -80,6 +94,7 @@ int usb_init(void)
 	set_non_blocking();
 #endif //LFMB_CLIENT
 	return 0;
+	
 usb_init_err:
 	if(usb_control_fd >= 0)
 	{		
@@ -101,6 +116,333 @@ usb_init_err:
 	fds[2] = usb_bulkout_fd;
 	set_high_fd();
 	return -1;
+}
+
+#ifdef HAS_LIBUSB
+#define USBLOGLEVEL				4
+
+int usb_libusb_init(void)
+{
+#ifdef LFMB_CLIENT
+	int result;
+	
+	result = libusb_init(&libusbContext);
+	if (result != LIBUSB_SUCCESS)
+	{
+		error_message("Failed to initialise libusb. libusb error: %d\n", result);
+		return -1;
+	}
+
+	// Setup libusb log level.
+	switch (USBLOGLEVEL)
+	{
+		case 0:
+			libusb_set_debug(libusbContext, LIBUSB_LOG_LEVEL_NONE);
+			break;
+
+		case 1:
+			libusb_set_debug(libusbContext, LIBUSB_LOG_LEVEL_ERROR);
+			break;
+
+		case 2:
+			libusb_set_debug(libusbContext, LIBUSB_LOG_LEVEL_WARNING);
+			break;
+
+		case 3:
+			libusb_set_debug(libusbContext, LIBUSB_LOG_LEVEL_INFO);
+			break;
+
+		case 4:
+			libusb_set_debug(libusbContext, LIBUSB_LOG_LEVEL_DEBUG);
+			break;
+	}
+	
+	if(find_usb_device() < 0)
+		return -1;
+
+	result = libusb_open(ourDevice, &ourDeviceHandle);
+	if (result != LIBUSB_SUCCESS)
+	{
+		error_message("Failed to access device. libusb error: %d\n", result);
+		return -1;
+	}
+	
+	if(claim_interface() < 0)
+	{
+		usb_libusb_cleanup();
+		return -1;
+	}
+	
+	libusb_pollfd_list = libusb_get_pollfds(libusbContext);
+	if(!libusb_pollfd_list)
+	{
+		error_message("Failed to get libusb poll fds\n");
+		usb_libusb_cleanup();
+		return -1;
+	}
+	int i = 0;
+	usb_bulkin_fd = -1;
+	usb_bulkout_fd = -1;
+	while(libusb_pollfd_list[i])
+	{
+		if(libusb_pollfd_list[i]->events & POLLIN)
+		{
+			message("poll in fd: %d\n",libusb_pollfd_list[i]->fd);
+			///eenie meenie minie moe
+			if(usb_bulkin_fd == -2)
+				usb_bulkin_fd = libusb_pollfd_list[i]->fd;
+			else
+				usb_bulkin_fd--;
+			/* FIXME no, no, but seriously, there's no way to associate fd with endpoints... just
+			 * this poll thing... ... */
+		}
+		else if(libusb_pollfd_list[i]->events & POLLOUT)
+			message("poll out fd: %d\n",libusb_pollfd_list[i]->fd);
+		else
+			message("unknown fd: %d\n",libusb_pollfd_list[i]->fd);
+		i++;
+	}
+	return 0;
+#else
+	return -1;
+#endif //LFMB_CLIENT
+}
+
+int find_usb_device(void)
+{
+	int result;
+	struct libusb_device_descriptor descriptor;
+	int deviceIndex;
+	struct libusb_device **devices;
+	int deviceCount = libusb_get_device_list(libusbContext, &devices);
+
+	for (deviceIndex = 0; deviceIndex < deviceCount; deviceIndex++)
+	{
+		libusb_get_device_descriptor(devices[deviceIndex], &descriptor);
+
+		message("vendor %04x product %04x\n", descriptor.idVendor, descriptor.idProduct);
+		//message("class %02x subclass %02x protocol %02x\n", descriptor.bInterfaceClass, descriptor.bInterfaceSubClass, descriptor.bInterfaceProtocol);
+		message("class %02x subclass %02x protocol %02x\n", descriptor.bDeviceClass, descriptor.bDeviceSubClass, descriptor.bDeviceProtocol);
+		
+		if((descriptor.idVendor == 0x18d1 /* && descriptor.idProduct == 0xd00d */) ||
+			(descriptor.idVendor == 0x2717 /* && descriptor.idProduct == 0xff48 */))
+			
+		{
+			/* FIXME surely there are other devices ?!?  Maybe I should check each for the protocol and then just send something */
+			ourDevice = devices[deviceIndex];
+			libusb_ref_device(ourDevice);
+			libusb_free_device_list(devices, deviceCount);			
+			return 0;
+		}
+	}
+	
+	libusb_free_device_list(devices, deviceCount);
+	
+	return -1;
+}
+
+int claim_interface(void)
+{
+	int result;	
+	struct libusb_config_descriptor *configDescriptor;
+	const struct libusb_endpoint_descriptor *endpoint;
+	int i, j, k;
+	int verbose = 1;
+	int altSettingIndex;
+	struct libusb_device_descriptor descriptor;
+	unsigned char stringBuffer[128];
+	
+	result = libusb_get_config_descriptor(ourDevice, 0, &configDescriptor);
+	if (result != LIBUSB_SUCCESS || !configDescriptor)
+	{
+		error_message("Failed to retrieve config descriptor\n");
+		return -1;
+	}
+
+	interfaceIndex = -1;
+	altSettingIndex = -1;
+
+	libusb_get_device_descriptor(ourDevice, &descriptor);
+	if (libusb_get_string_descriptor_ascii(ourDeviceHandle, descriptor.iManufacturer,
+			stringBuffer, 128) >= 0)
+	{
+		message("Manufacturer: \"%s\"\n", stringBuffer);
+	}
+
+	if (libusb_get_string_descriptor_ascii(ourDeviceHandle, descriptor.iProduct,
+			stringBuffer, 128) >= 0)
+	{
+		message("Product: \"%s\"\n", stringBuffer);
+	}
+
+	if (libusb_get_string_descriptor_ascii(ourDeviceHandle, descriptor.iSerialNumber,
+			stringBuffer, 128) >= 0)
+	{
+		message("Serial No: \"%s\"\n", stringBuffer);
+	}
+	//says Google Android... 
+	
+	for (i = 0; i < configDescriptor->bNumInterfaces; i++)
+	{
+		for (j = 0 ; j < configDescriptor->interface[i].num_altsetting; j++)
+		{
+			if (verbose)
+			{
+				message("\ninterface[%d].altsetting[%d]: num endpoints = %d\n",
+					i, j, configDescriptor->interface[i].altsetting[j].bNumEndpoints);
+				message("   Class.SubClass.Protocol: %02X.%02X.%02X\n",
+					configDescriptor->interface[i].altsetting[j].bInterfaceClass,
+					configDescriptor->interface[i].altsetting[j].bInterfaceSubClass,
+					configDescriptor->interface[i].altsetting[j].bInterfaceProtocol);
+			}
+
+			int inEndpointAddress = -1;
+			int outEndpointAddress = -1;
+
+			for (k = 0; k < configDescriptor->interface[i].altsetting[j].bNumEndpoints; k++)
+			{
+				endpoint = &configDescriptor->interface[i].altsetting[j].endpoint[k];
+
+				if (verbose)
+				{
+					message("       endpoint[%d].address: %02X\n", k, endpoint->bEndpointAddress);
+					message("           max packet size: %04X\n", endpoint->wMaxPacketSize);
+					message("          polling interval: %02X\n", endpoint->bInterval);
+				}
+
+				if((endpoint->bEndpointAddress & LIBUSB_ENDPOINT_IN) && (endpoint->bmAttributes & LIBUSB_TRANSFER_TYPE_BULK))
+					inEndpointAddress = endpoint->bEndpointAddress;
+				else if(endpoint->bmAttributes & LIBUSB_TRANSFER_TYPE_BULK)
+					outEndpointAddress = endpoint->bEndpointAddress;
+			}
+
+			if (interfaceIndex < 0
+				&& configDescriptor->interface[i].altsetting[j].bNumEndpoints == 2
+				&& configDescriptor->interface[i].altsetting[j].bInterfaceClass == VENDOR_SPECIFIC_CLASS
+				&& (configDescriptor->interface[i].altsetting[j].bInterfaceSubClass == LFMB_SUBCLASS ||
+						configDescriptor->interface[i].altsetting[j].bInterfaceSubClass == ADB_SUBCLASS /*||
+						configDescriptor->interface[i].altsetting[j].bInterfaceSubClass == 0xFF*/)
+				&& inEndpointAddress != -1
+				&& outEndpointAddress != -1)
+			{
+				interfaceIndex = i;
+				altSettingIndex = j;
+				libusb_inEndpoint = inEndpointAddress;
+				libusb_outEndpoint = outEndpointAddress;
+				message("inEndpoint %08x outEndpoint %08x\n", libusb_inEndpoint, libusb_outEndpoint);
+			}
+		}
+	}
+
+	libusb_free_config_descriptor(configDescriptor);
+
+	if (interfaceIndex < 0)
+	{
+		error_message("Failed to find correct interface configuration\n");
+		return -1;
+	}
+	
+	result = libusb_claim_interface(ourDeviceHandle, interfaceIndex);
+
+//#ifdef OS_LINUX
+
+	if (result != LIBUSB_SUCCESS)
+	{
+		usb_libusb_detacheddriver = 1;
+		message("Attempt failed. Detaching driver...\n");
+		libusb_detach_kernel_driver(ourDeviceHandle, interfaceIndex);
+		message("Claiming interface again...\n");
+		result = libusb_claim_interface(ourDeviceHandle, interfaceIndex);
+	}
+
+//#endif
+
+	if (result != LIBUSB_SUCCESS)
+	{
+		error_message("Claiming interface failed!\n");
+		return -1;
+	}
+	
+	result = libusb_set_interface_alt_setting(ourDeviceHandle, interfaceIndex, altSettingIndex);
+	if (result != LIBUSB_SUCCESS)
+	{
+		error_message("Setting up interface failed!\n");
+		return -1;
+	}
+	
+	return 0;
+}
+
+void usb_libusb_cleanup(void)
+{
+	/* undefined reference:
+	if(libusb_pollfd_list)
+		libusb_free_pollfds(libusb_pollfd_list);
+	*/
+	if(interfaceIndex != -1)
+	{
+		libusb_release_interface(ourDeviceHandle, interfaceIndex);
+//#ifdef OS_LINUX
+		if (usb_libusb_detacheddriver)
+		{
+			message("Re-attaching kernel driver...\n");
+			libusb_attach_kernel_driver(ourDeviceHandle, interfaceIndex);
+		}
+//#endif
+	}
+
+	if(ourDeviceHandle)
+		libusb_close(ourDeviceHandle);
+
+	if(ourDevice)
+		libusb_unref_device(ourDevice);
+
+	if(libusbContext)
+		libusb_exit(libusbContext);
+}
+#endif //HAS_LIBUSB
+
+int local_ipc_protocol_test(void)
+{
+	mknod("/tmp/lfmb_lipt_in", S_IFIFO | 0666, 0);
+	mknod("/tmp/lfmb_lipt_out", S_IFIFO | 0666, 0);
+#ifndef LFMB_CLIENT
+	usb_bulkin_fd = open("/tmp/lfmb_lipt_in", O_RDWR);
+#else
+	usb_bulkin_fd = open("/tmp/lfmb_lipt_out", O_RDWR);
+#endif //!LFMB_CLIENT
+	if(usb_bulkin_fd < 0)
+		{ error_message("Can't open local ipc protocol test bulk in err:%d\n", errno); return -1; }
+#ifndef LFMB_CLIENT
+	usb_bulkout_fd = open("/tmp/lfmb_lipt_out", O_RDWR);
+#else
+	usb_bulkout_fd = open("/tmp/lfmb_lipt_in", O_RDWR);
+#endif //!LFMB_CLIENT
+	if(usb_bulkout_fd < 0)
+		{ error_message("Can't open local ipc protocol test bulk out err:%d\n", errno); return -1; }
+	return 0;
+}
+
+int usb_ffs_init(void)
+{
+	fill_descriptors_strings();
+	
+	usb_control_fd = open(USB_FFS_CONTROL, O_RDWR);
+	if(usb_control_fd < 0)
+		{ error_message("Can't open usb control err:%d\n", errno); return -1; }
+		
+	if(write(usb_control_fd, &descriptors, sizeof(descriptors)) < 0)
+		{ error_message("Writing descriptors to usb control failed err: %d\n", errno); return -1; }
+	
+	if(write(usb_control_fd, &strings, sizeof(strings)) < 0)
+		{ error_message("Writing strings to usb control failed err: %d\n", errno); return -1; }
+	usb_bulkin_fd = open(USB_FFS_BULKIN, O_RDWR);
+	if(usb_bulkin_fd < 0)
+		{ error_message("Can't open usb bulk in err:%d\n", errno); return -1; }
+	usb_bulkout_fd = open(USB_FFS_BULKOUT, O_RDWR);
+	if(usb_bulkout_fd < 0)
+		{ error_message("Can't open usb bulk out err:%d\n", errno); return -1; }
+	return 0;
 }
 
 int usb_ffs_write(const void * data, int len)
@@ -176,13 +518,88 @@ void usb_ffs_kick(void)
 	set_high_fd();
 }
 
+int usb_write(const void * data, int len)
+{
+#ifdef HAS_LIBUSB
+	int dataTransferred;
+	int result;
+#endif //HAS_LIBUSB
+	if(usb_ffs)
+		return usb_ffs_write(data, len);
+	else
+	{
+#ifdef HAS_LIBUSB
+		message("data %p len %d\n", data, len);
+		result = libusb_bulk_transfer(ourDeviceHandle, libusb_outEndpoint, (void *)data, len, &dataTransferred, 1000);
+		if (result != LIBUSB_SUCCESS)
+		{
+			message("libusb bulk transfer write failed: %d\n", result);
+			return -1;
+		}
+		if(dataTransferred != len)
+		{
+			message("libusb bulk transfer write did not complete transfer, only %d out of %d\n", dataTransferred, len);
+		}
+#else
+		return -1;
+#endif //HAS_LIBUSB
+	}
+	return 0;
+}
+
+int usb_read(void * data, int len)
+{
+#ifdef HAS_LIBUSB
+	int dataTransferred;
+	int result;
+#endif //HAS_LIBUSB
+	if(usb_ffs)
+		return usb_ffs_read(data, len);
+	else
+	{
+#ifdef HAS_LIBUSB
+		result = libusb_bulk_transfer(ourDeviceHandle, libusb_inEndpoint, data, len, &dataTransferred, 1000);
+		if (result != LIBUSB_SUCCESS)
+		{
+			message("libusb bulk transfer read failed: %d\n", result);
+			return -1;
+		}
+		if(dataTransferred != len)
+		{
+			message("libusb bulk transfer read did not complete transfer, only %d out of %d\n", dataTransferred, len);
+		}
+#else
+		return -1;
+#endif //HAS_LIBUSB
+	}
+	return 0;
+}
+
+void usb_kick(void)
+{
+	if(usb_ffs)
+		usb_ffs_kick();
+	else
+		return;
+}
+
 void usb_reset(void)
 {
-	usb_ffs_kick();
+	usb_kick();
 	if(usb_init() < 0)
 	{
 		error_message("usb failed to reinitialize\n");
 		// probably fatal?
 	}
+}
+
+//I don't know... I should use this everywhere and properly clean things up... 
+//FIXME FIXME FIXME at least call it from the client
+void usb_cleanup(void)
+{
+#ifdef HAS_LIBUSB
+	if(!usb_ffs)
+		usb_libusb_cleanup();
+#endif //HAS_LIBUSB
 }
 

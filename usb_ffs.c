@@ -18,12 +18,6 @@
 #include <string.h>
 #include "usb_ffs.h"
 
-
-#define VENDOR_SPECIFIC_CLASS					0xff
-/* FIXME */
-#define ADB_SUBCLASS								0x42
-#define ADB_PROTOCOL								0x1
-
 #define MAX_PACKET_SIZE_FS			64
 #define MAX_PACKET_SIZE_HS			512
 

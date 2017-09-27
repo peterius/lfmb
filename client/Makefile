@@ -1,5 +1,5 @@
 CC=gcc
-DEFINES = -DLFMB_CLIENT
+DEFINES = -DLFMB_CLIENT -I/usr/include/libusb-1.0
 
 #drag in another Makefile for the client
 
@@ -33,7 +33,7 @@ OBJECTS= protocol.o \
 		lfmb.o
 
 lfmb: $(OBJECTS)
-	$(CC) -o lfmb $(OBJECTS)
+	$(CC) -o lfmb -lusb-1.0 $(OBJECTS)
 
 clean:
 	-rm *.o

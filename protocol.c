@@ -64,7 +64,7 @@ int transport_init(void)
 #ifdef LFMB_CLIENT
 	//handshake:
 	if(send_connect() < 0)
-		return -1;
+		{ usb_cleanup(); return -1; }
 	if(receive_accept() < 0)
 		return -1;
 #endif //LFMB_CLIENT
@@ -85,7 +85,7 @@ int send_connect(void)
 	ph->options = htole16(handshake_value);
 	ph->length = htole16(sizeof(struct packethdr));
 
-	if(usb_ffs_write(packet, ph->length) < 0)
+	if(usb_write(packet, ph->length) < 0)
 		{ free(packet); return -1; }
 
 	free(packet);
@@ -96,7 +96,7 @@ int receive_accept(void)
 {
 	char * packet = calloc(1, sizeof(struct packethdr));
 	struct packethdr * ph = (struct packethdr *)packet;
-	if(usb_ffs_read(packet, sizeof(struct packethdr)) < 0)
+	if(usb_read(packet, sizeof(struct packethdr)) < 0)
 		{ free(packet); return -1; }
 	last_size = le16toh(ph->length);
 	if(last_size != sizeof(struct packethdr))
@@ -127,7 +127,7 @@ int send_get_file(char * remotefile)
 	
 	memcpy(packet + sizeof(struct packethdr), remotefile, strlen(remotefile) + 1);
 	
-	if(usb_ffs_write(packet, last_size) < 0)
+	if(usb_write(packet, last_size) < 0)
 		{ free(packet); return -1; }
 	
 	free(packet);
@@ -146,7 +146,7 @@ int send_put_file(char * remotefile)
 	
 	memcpy(packet + sizeof(struct packethdr), remotefile, strlen(remotefile) + 1);
 	
-	if(usb_ffs_write(packet, last_size) < 0)
+	if(usb_write(packet, last_size) < 0)
 		{ free(packet); return -1; }
 	
 	free(packet);
@@ -163,7 +163,7 @@ int send_open_shell(void)
 	last_size = sizeof(struct packethdr);
 	ph->length = htole16(last_size);
 
-	if(usb_ffs_write(packet, last_size) < 0)
+	if(usb_write(packet, last_size) < 0)
 		{ free(packet); return -1; }
 	
 	free(packet);
@@ -184,7 +184,7 @@ int send_disconnect(void)
 	last_size = sizeof(struct packethdr);
 	ph->length = htole16(last_size);
 
-	if(usb_ffs_write(packet, last_size) < 0)
+	if(usb_write(packet, last_size) < 0)
 		{ free(packet); return -1; }
 	
 	free(packet);
@@ -206,7 +206,7 @@ int send_filedata_to_follow(unsigned int filesize)
 	
 	*(uint32_t *)&(packet[sizeof(struct packethdr)]) = htole32((uint32_t)filesize);
 	last_size = sizeof(struct packethdr) + 4;
-	if(usb_ffs_write(packet, last_size) < 0)
+	if(usb_write(packet, last_size) < 0)
 		{ free(packet); return -1; }
 	
 	free(packet);
@@ -225,7 +225,7 @@ int send_filedata(char * buffer, unsigned int bytes)
 	memcpy(packet + sizeof(struct packethdr), buffer, bytes);
 	
 	last_size = sizeof(struct packethdr) + bytes;
-	if(usb_ffs_write(packet, last_size) < 0)
+	if(usb_write(packet, last_size) < 0)
 		{ free(packet); return -1; }
 	
 	free(packet);
@@ -243,7 +243,7 @@ int send_filechecksum(uint32_t checksum)
 	
 	*(uint32_t *)&(packet[sizeof(struct packethdr)]) = htole32(checksum);
 	last_size = sizeof(struct packethdr) + 4;
-	if(usb_ffs_write(packet, last_size) < 0)
+	if(usb_write(packet, last_size) < 0)
 		{ free(packet); return -1; }
 	
 	free(packet);
@@ -255,7 +255,7 @@ int receive_filedata_to_follow(unsigned int * total_filesize)
 	char * packet = calloc(1, sizeof(struct packethdr) + 4);
 	struct packethdr * ph = (struct packethdr *)packet;
 	
-	if(usb_ffs_read(packet, sizeof(struct packethdr) + 4) < 0)
+	if(usb_read(packet, sizeof(struct packethdr) + 4) < 0)
 		{ free(packet); return -1; }
 	last_size = le16toh(ph->length);
 	if(last_size != sizeof(struct packethdr) + 4)
@@ -269,14 +269,14 @@ int receive_filedata(char ** buffer, unsigned int * bytes)
 {
 	char * packet = calloc(1, sizeof(struct packethdr));
 	struct packethdr * ph = (struct packethdr *)packet;
-	if(usb_ffs_read(packet, sizeof(struct packethdr)) < 1)
+	if(usb_read(packet, sizeof(struct packethdr)) < 1)
 		{ free(packet); return -1; }
 	last_size = le16toh(ph->length);
 	*bytes = last_size - sizeof(struct packethdr);
 	free(packet);
 	*buffer = calloc(1, *bytes);
 	message("Reading %d bytes into %p\n", *bytes, *buffer);
-	if(usb_ffs_read(*buffer, *bytes) < 0)
+	if(usb_read(*buffer, *bytes) < 0)
 		{ free(*buffer); *buffer = NULL; *bytes = 0; return -1; }
 	return 0;
 }
@@ -285,7 +285,7 @@ int receive_filechecksum(uint32_t * received_checksum)
 {
 	char * packet = calloc(1, sizeof(struct packethdr) + 4);
 	struct packethdr * ph = (struct packethdr *)packet;
-	if(usb_ffs_read(packet, sizeof(struct packethdr) + 4) < 0)
+	if(usb_read(packet, sizeof(struct packethdr) + 4) < 0)
 		{ free(packet); return -1; }
 	last_size = le16toh(ph->length);
 	if(last_size != sizeof(struct packethdr) + 4)
@@ -307,7 +307,7 @@ int send_ack(void)
 	
 	*(uint32_t *)&(packet[sizeof(struct packethdr)]) = htole32(last_size);
 
-	if(usb_ffs_write(packet, sizeof(struct packethdr) + 4) < 0)
+	if(usb_write(packet, sizeof(struct packethdr) + 4) < 0)
 		{ free(packet); return -1; }
 	last_size = 0;
 
@@ -326,7 +326,7 @@ int send_error(void)
 	
 	*(uint32_t *)&(packet[sizeof(struct packethdr)]) = htole32(last_size);
 
-	if(usb_ffs_write(packet, sizeof(struct packethdr) + 4) < 0)
+	if(usb_write(packet, sizeof(struct packethdr) + 4) < 0)
 		{ free(packet); return -1; }
 	last_size = 0;
 	
@@ -338,7 +338,7 @@ int receive_ack(void)
 {
 	char * packet = calloc(1, sizeof(struct packethdr) + 4);
 	struct packethdr * ph = (struct packethdr *)packet;
-	if(usb_ffs_read(packet, sizeof(struct packethdr) + 4) < 0)
+	if(usb_read(packet, sizeof(struct packethdr) + 4) < 0)
 		{ free(packet); return -1; }
 	if(le16toh(ph->command) != c_ack)
 		{ error_message("did not receive acknowledgement\n"); free(packet); return -1; }
@@ -392,7 +392,7 @@ int handle(char * p, int len)
 			ph->command = htole16((unsigned short)c_accept);
 			ph->options = htole16(handshake_value + 1);
 	
-			usb_ffs_write(p, last_size);
+			usb_write(p, last_size);
 			connection_state = s_connected;
 			break;
 		case c_accept:
@@ -499,10 +499,10 @@ int send_to_shell(char * buffer, int len)
 	ph->magic = htole16(PACKETHDR_MAGIC);
 	ph->command = htole16((unsigned short)c_toshell);
 	ph->length = htole16(sizeof(struct packethdr) + len);
-	if(usb_ffs_write(packet, sizeof(struct packethdr)) < 0)
+	if(usb_write(packet, sizeof(struct packethdr)) < 0)
 		{ free(packet); return -1; }
 	free(packet);
-	if(usb_ffs_write(buffer, len) < 0)
+	if(usb_write(buffer, len) < 0)
 		return -1;
 	last_size = sizeof(struct packethdr) + len;
 	
@@ -516,7 +516,7 @@ int read_and_handle_usb(void)
 {
 	unsigned short length;
 	char * packet = malloc(sizeof(struct packethdr));
-	if(usb_ffs_read(packet, sizeof(struct packethdr)) < 0)
+	if(usb_read(packet, sizeof(struct packethdr)) < 0)
 		return -1;
 	length = le16toh(((struct packethdr *)packet)->length);
 	if(!length || le16toh(((struct packethdr *)packet)->magic) != PACKETHDR_MAGIC)
@@ -524,7 +524,7 @@ int read_and_handle_usb(void)
 	packet = realloc(packet, length);
 	if(!packet)
 		{ error_message("packet reallocation failed\n"); return -1; }
-	if(usb_ffs_read(packet + sizeof(struct packethdr), length - sizeof(struct packethdr)) < 0)
+	if(usb_read(packet + sizeof(struct packethdr), length - sizeof(struct packethdr)) < 0)
 		return -1;
 	if(handle(packet, length) < 0)
 		return -1;
@@ -540,10 +540,10 @@ int send_from_shell(char * buffer, int len)
 	ph->magic = htole16(PACKETHDR_MAGIC);
 	ph->command = htole16((unsigned short)c_fromshell);
 	ph->length = htole16(sizeof(struct packethdr) + len);
-	if(usb_ffs_write(packet, sizeof(struct packethdr)) < 0)
+	if(usb_write(packet, sizeof(struct packethdr)) < 0)
 		{ free(packet); return -1; }
 	free(packet);
-	if(usb_ffs_write(buffer, len) < 0)
+	if(usb_write(buffer, len) < 0)
 		return -1;
 	last_size = sizeof(struct packethdr) + len;
 	return 0;
@@ -555,7 +555,7 @@ int read_from_shell(void)
 	unsigned short length;
 	enum protocol_command command;
 	char * packet = malloc(sizeof(struct packethdr));
-	if(usb_ffs_read(packet, sizeof(struct packethdr)) < 0)
+	if(usb_read(packet, sizeof(struct packethdr)) < 0)
 		return -1;
 	length = le16toh(((struct packethdr *)packet)->length);
 	if(!length || le16toh(((struct packethdr *)packet)->magic) != PACKETHDR_MAGIC)
@@ -571,7 +571,7 @@ int read_from_shell(void)
 	{
 		length -= sizeof(struct packethdr);
 		packet = malloc(length);
-		if(usb_ffs_read(packet, length) < 0)
+		if(usb_read(packet, length) < 0)
 			return -1;
 		if(receive_shell_from_server(packet, length) < 0)
 		{

@@ -16,6 +16,14 @@
 
 #include <linux/usb/functionfs.h>
 
+#define VENDOR_SPECIFIC_CLASS					0xff
+/* FIXME */
+#define ADB_SUBCLASS								0x42
+#define ADB_PROTOCOL								0x1
+
+#define LFMB_SUBCLASS							0x43
+#define LFMB_PROTOCOL							0x6
+
 #define STR_INTERFACE_		"ADB Interface"
  
 extern struct usb_ffs_descriptors {

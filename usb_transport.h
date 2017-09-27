@@ -17,6 +17,7 @@
 extern int usb_control_fd, usb_bulkin_fd, usb_bulkout_fd;
 
 int usb_init(void);
-int usb_ffs_write(const void * data, int len);
-int usb_ffs_read(void * data, int len);
+int usb_write(const void * data, int len);
+int usb_read(void * data, int len);
 void usb_reset(void);
+void usb_cleanup(void);
