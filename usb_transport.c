@@ -21,6 +21,10 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>		//for system()
+#include <unistd.h>
+#include <sys/stat.h>
+#include <sys/ioctl.h>
 #include <fcntl.h>
 #include <errno.h>
 #ifdef LFMB_CLIENT
@@ -30,9 +34,12 @@
 #include <libusb.h>
 #include <poll.h>
 #endif //HAS_LIBUSB
+#include "usb_transport.h"
 #include "usb_ffs.h"
 #include "message.h"
+#include "protocol.h"			//just for MAX_BUFFER_SIZE
 #include "io.h"
+#include "packet.h"
 
 #define USB_FFS_CONTROL				"/dev/usb-ffs/lfmb/ep0"
 #define USB_FFS_BULKIN				"/dev/usb-ffs/lfmb/ep1"
@@ -60,11 +67,12 @@ int usb_libusb_init(void);
 int find_usb_device(void);
 int claim_interface(void);
 void usb_libusb_cleanup(void);
+int libusb_async_write(void * data, int len);
+void libusb_async_write_cb(struct libusb_transfer * transfer);
 #endif //HAS_LIBUSB
 int local_ipc_protocol_test(void);
 int usb_ffs_init(void);
-int usb_ffs_write(const void * data, int len);
-int usb_ffs_read(void * data, int len);
+int usb_ffs_read(unsigned short * len, unsigned short previously_read);
 void usb_ffs_kick(void);
 
 int usb_init(void)
@@ -96,6 +104,9 @@ int usb_init(void)
 	fds[2] = usb_bulkout_fd;
 	set_high_fd();
 #ifndef LFMB_CLIENT
+	/* This doesn't seem to do anything, server side read and write, particularly write can still hang
+	 * presumably something to do with the functionfs driver... sigh... but if we don't set non blocking
+	 * select won't work so... */
 	set_non_blocking();
 #endif //LFMB_CLIENT
 	return 0;
@@ -124,7 +135,7 @@ usb_init_err:
 }
 
 #ifdef HAS_LIBUSB
-#define USBLOGLEVEL				4
+#define USBLOGLEVEL				0
 
 int usb_libusb_init(void)
 {
@@ -171,13 +182,13 @@ int usb_libusb_init(void)
 		error_message("Failed to access device. libusb error: %d\n", result);
 		return -1;
 	}
-	
+
 	if(claim_interface() < 0)
 	{
 		usb_libusb_cleanup();
 		return -1;
 	}
-	
+
 	libusb_pollfd_list = libusb_get_pollfds(libusbContext);
 	if(!libusb_pollfd_list)
 	{
@@ -185,6 +196,7 @@ int usb_libusb_init(void)
 		usb_libusb_cleanup();
 		return -1;
 	}
+
 	int i = 0;
 	usb_bulkin_fd = -1;
 	usb_bulkout_fd = -1;
@@ -228,10 +240,8 @@ int find_usb_device(void)
 		message("vendor %04x product %04x\n", descriptor.idVendor, descriptor.idProduct);
 		//message("class %02x subclass %02x protocol %02x\n", descriptor.bInterfaceClass, descriptor.bInterfaceSubClass, descriptor.bInterfaceProtocol);
 		message("class %02x subclass %02x protocol %02x\n", descriptor.bDeviceClass, descriptor.bDeviceSubClass, descriptor.bDeviceProtocol);
-		
-		if((descriptor.idVendor == 0x18d1 /* && descriptor.idProduct == 0xd00d */) ||
-			(descriptor.idVendor == 0x2717 /* && descriptor.idProduct == 0xff48 */))
-			
+
+		if(descriptor.idVendor == 0x1d6b && descriptor.idProduct == 0x0161)
 		{
 			/* FIXME surely there are other devices ?!?  Maybe I should check each for the protocol and then just send something */
 			ourDevice = devices[deviceIndex];
@@ -242,7 +252,7 @@ int find_usb_device(void)
 	}
 	
 	libusb_free_device_list(devices, deviceCount);
-	
+	error_message("Couldn't find device\n");
 	return -1;
 }
 
@@ -256,7 +266,7 @@ int claim_interface(void)
 	int altSettingIndex;
 	struct libusb_device_descriptor descriptor;
 	unsigned char stringBuffer[128];
-	
+
 	result = libusb_get_config_descriptor(ourDevice, 0, &configDescriptor);
 	if (result != LIBUSB_SUCCESS || !configDescriptor)
 	{
@@ -317,16 +327,14 @@ int claim_interface(void)
 
 				if((endpoint->bEndpointAddress & LIBUSB_ENDPOINT_IN) && (endpoint->bmAttributes & LIBUSB_TRANSFER_TYPE_BULK))
 					inEndpointAddress = endpoint->bEndpointAddress;
-				else if(endpoint->bmAttributes & LIBUSB_TRANSFER_TYPE_BULK)
+				else if(endpoint->bEndpointAddress&& (endpoint->bmAttributes & LIBUSB_TRANSFER_TYPE_BULK))
 					outEndpointAddress = endpoint->bEndpointAddress;
 			}
 
 			if (interfaceIndex < 0
-				&& configDescriptor->interface[i].altsetting[j].bNumEndpoints == 2
+				&& configDescriptor->interface[i].altsetting[j].bNumEndpoints >= 2	/* 2 or 3? */
 				&& configDescriptor->interface[i].altsetting[j].bInterfaceClass == VENDOR_SPECIFIC_CLASS
-				&& (configDescriptor->interface[i].altsetting[j].bInterfaceSubClass == LFMB_SUBCLASS ||
-						configDescriptor->interface[i].altsetting[j].bInterfaceSubClass == ADB_SUBCLASS /*||
-						configDescriptor->interface[i].altsetting[j].bInterfaceSubClass == 0xFF*/)
+				&& (configDescriptor->interface[i].altsetting[j].bInterfaceSubClass == LFMB_SUBCLASS )
 				&& inEndpointAddress != -1
 				&& outEndpointAddress != -1)
 			{
@@ -430,6 +438,7 @@ int local_ipc_protocol_test(void)
 
 int usb_ffs_init(void)
 {
+	static int not_first_init = 0;
 	fill_descriptors_strings();
 	
 	usb_control_fd = open(USB_FFS_CONTROL, O_RDWR);
@@ -441,23 +450,31 @@ int usb_ffs_init(void)
 	
 	if(write(usb_control_fd, &strings, sizeof(strings)) < 0)
 		{ error_message("Writing strings to usb control failed err: %d\n", errno); return -1; }
-	usb_bulkin_fd = open(USB_FFS_BULKIN, O_RDWR);
+	usb_bulkin_fd = open(USB_FFS_BULKIN, O_RDONLY);
 	if(usb_bulkin_fd < 0)
 		{ error_message("Can't open usb bulk in err:%d\n", errno); return -1; }
-	usb_bulkout_fd = open(USB_FFS_BULKOUT, O_RDWR);
+	usb_bulkout_fd = open(USB_FFS_BULKOUT, O_WRONLY);
 	if(usb_bulkout_fd < 0)
 		{ error_message("Can't open usb bulk out err:%d\n", errno); return -1; }
+	
+	//assumed to be created by setup by init:
+	system("ls /sys/class/udc > /sys/kernel/config/usb_gadget/g1/UDC");
+	message("usb_ffs_init successful\n");
+	if(not_first_init)
+		sleep(5);
+	not_first_init = 1;
 	return 0;
 }
 
-int usb_ffs_write(const void * data, int len)
+int usb_ffs_write(void * data, unsigned int len)
 {
 	size_t count = 0;
 	int ret;
 
+	message("usb_ffs_write called with %p %d\n", data, len);
 	while (count < len)
 	{
-		ret = write(usb_bulkin_fd, data + count, len - count);
+		ret = write(usb_bulkout_fd, data + count, len - count);
 		if (ret < 0)
 		{
 			if (errno != EINTR)
@@ -465,52 +482,82 @@ int usb_ffs_write(const void * data, int len)
 		}
 		else
 			count += ret;
+		message("usb_ffs_write count %d len %d\n", count, len);
 	}
 
 	return count;
 }
 
-int usb_ffs_read(void * data, int len)
+int usb_async_write_post(void * data, unsigned int len)
 {
-	size_t count = 0;
+	struct packet_packet * p, * post;
+	
+	if(!packet_chain)
+	{
+		packet_chain = malloc(sizeof(struct packet_packet));
+		if(!packet_chain)
+			{ error_message("failed to allocate packet chain!\n"); return -1; }
+		post = packet_chain;
+	}
+	else
+	{
+		p = packet_chain;
+		while(p->next)
+			p = p->next;
+		post = malloc(sizeof(struct packet_packet));
+		if(!post)
+			{ error_message("failed to allocate packet chain!\n"); return -1; }
+		p->next = post;
+	}
+	post->data = data;
+	post->length = len;
+	post->next = NULL;
+	return 0;
+}
+
+int usb_ffs_read(unsigned short * len, unsigned short previously_read)
+{
 	int ret;
 
-	while (count < len)
+	message("usb_ffs_read called %d %d\n", *len, previously_read);
+	while (previously_read < *len)
 	{
-		ret = read(usb_bulkout_fd, data + count, len - count);
+		ret = read(usb_bulkin_fd, g_read_buffer + previously_read, *len - previously_read);
 		if (ret < 0)
 		{
 			if (errno != EINTR && errno != EWOULDBLOCK)
-				{ error_message("usb ffs read failed fd %d length %d count %d\n", usb_bulkout_fd, len, count); return ret; }
+				{ error_message("usb ffs read failed fd %d length %d count %d -(%d)\n", usb_bulkout_fd, *len, previously_read, errno); return ret; }
 		}
 		else
-			count += ret;
+			previously_read += ret;
+		//message("usb_ffs_read: count %d len %d\n", previously_read, *len);			//a lot of these
 	}
-
-	return count;
+	*len = previously_read;
+	return 0;
 }
 
+/*  ENODEV*/
 void usb_ffs_kick(void)
 {
 	int err;
 #ifndef LOCAL_IPC_PROTOCOL_TEST
 	err = ioctl(usb_bulkin_fd, FUNCTIONFS_CLEAR_HALT);
 	if (err < 0)
-		error_message("usb kick source fd %d clear halt failed err %d", usb_bulkin_fd, errno);
+		error_message("usb kick source fd %d clear halt failed err %d\n", usb_bulkin_fd, errno);
 
 	err = ioctl(usb_bulkout_fd, FUNCTIONFS_CLEAR_HALT);
 	if (err < 0)
-		error_message("usb kick sink fd %d clear halt failed err %d", usb_bulkout_fd, errno);
+		error_message("usb kick sink fd %d clear halt failed err %d\n", usb_bulkout_fd, errno);
 #else
 	error_message("reseting io\n");
 #endif //!LOCAL_IPC_PROTOCOL_TEST
 
-
+	error_message("usb_ffs_kick\n");
 	// FIXME are we supposed to close control also?  barely matters but, maybe
 	// there's a more graceful kind of reset... 
 	if(usb_control_fd >= 0)
 		close(usb_control_fd);
-   usb_control_fd = -1;
+   	usb_control_fd = -1;
 	if(usb_bulkin_fd >= 0)
 		close(usb_bulkin_fd);
 	usb_bulkin_fd = -1;
@@ -521,20 +568,28 @@ void usb_ffs_kick(void)
 	fds[1] = usb_bulkin_fd;
 	fds[2] = usb_bulkout_fd;
 	set_high_fd();
+	error_message("usb_ffs_kick returns...\n");
 }
 
-int usb_write(const void * data, int len)
+/* data passed here will be freed by a callback or a completion... */
+int usb_write(void * data, unsigned int len)
 {
+	int result;
 #ifdef HAS_LIBUSB
 	int dataTransferred;
-	int result;
+	
 #endif //HAS_LIBUSB
 	if(usb_ffs)
-		return usb_ffs_write(data, len);
+	{
+		result = usb_ffs_write(data, len);
+		free(data);
+		return result;
+	}
 	else
 	{
 #ifdef HAS_LIBUSB
-		message("data %p len %d\n", data, len);
+		/*if(libusb_async_write(data, len) < 0)
+			return -1;*/
 		result = libusb_bulk_transfer(ourDeviceHandle, libusb_outEndpoint, (void *)data, len, &dataTransferred, 1000);
 		if (result != LIBUSB_SUCCESS)
 		{
@@ -552,27 +607,53 @@ int usb_write(const void * data, int len)
 	return 0;
 }
 
-int usb_read(void * data, int len)
+#ifdef HAS_LIBUSB
+int libusb_async_write(void * data, int len)
+{
+	struct libusb_transfer * lut;
+	
+	lut = libusb_alloc_transfer(0);
+	if(!lut)
+		{ error_message("libusb_alloc_transfer failed\n"); free(data); return -1; }
+	lut->length = len;
+	lut->buffer = data;
+	libusb_fill_bulk_transfer(lut, ourDeviceHandle, libusb_outEndpoint, data, len, &libusb_async_write_cb, lut, 1000);
+	if(libusb_submit_transfer(lut) != 0)
+		return -1;
+	return 0;
+}
+
+void libusb_async_write_cb(struct libusb_transfer * transfer)
+{
+	if(transfer->status != LIBUSB_TRANSFER_COMPLETED)
+	{
+		error_message("libusb_submit_transfer error\n");
+	}
+	//libusb frees the data on free transfer
+	libusb_free_transfer(transfer);
+}
+#endif //HAS_LIBUSB
+
+int usb_read(unsigned short * len, unsigned short previously_read)
 {
 #ifdef HAS_LIBUSB
 	int dataTransferred;
 	int result;
+	static char * datap = NULL;
 #endif //HAS_LIBUSB
 	if(usb_ffs)
-		return usb_ffs_read(data, len);
+		return usb_ffs_read(len, previously_read);
 	else
 	{
 #ifdef HAS_LIBUSB
-		result = libusb_bulk_transfer(ourDeviceHandle, libusb_inEndpoint, data, len, &dataTransferred, 1000);
+		*len = 0;
+		result = libusb_bulk_transfer(ourDeviceHandle, libusb_inEndpoint, g_read_buffer + previously_read, MAX_BUFFER_SIZE - previously_read, &dataTransferred, 1000);
 		if (result != LIBUSB_SUCCESS)
 		{
 			message("libusb bulk transfer read failed: %d\n", result);
 			return -1;
 		}
-		if(dataTransferred != len)
-		{
-			message("libusb bulk transfer read did not complete transfer, only %d out of %d\n", dataTransferred, len);
-		}
+		*len = previously_read + dataTransferred;
 #else
 		return -1;
 #endif //HAS_LIBUSB
@@ -594,8 +675,11 @@ void usb_reset(void)
 	if(usb_init() < 0)
 	{
 		error_message("usb failed to reinitialize\n");
+		sleep(30);
 		// probably fatal?
+		//FIXME or just a disconnect and we need to wait for a connect...
 	}
+	error_message("usb just reset\n");
 }
 
 //I don't know... I should use this everywhere and properly clean things up... 

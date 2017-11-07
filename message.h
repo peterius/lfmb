@@ -16,3 +16,6 @@
 
 int error_message(const char * format, ...); 
 int message(const char * format, ...); 
+
+void set_errorlog(const char * filename);
+void close_errorlog(void);

@@ -15,8 +15,6 @@
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>. */
 
 
-#define MAX_BUFFER_SIZE			4096
-
 extern int term_stdinout_fd;
 extern int terminal_pid;
 

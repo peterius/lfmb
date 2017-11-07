@@ -15,20 +15,38 @@
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>. */
 
 #include <stdio.h>
-#include <stdint.h>
+#include <signal.h>
 #include <stdlib.h>
-#include <string.h>
-#include <sys/ioctl.h>
-#include <errno.h>
-
-#include "protocol.h"
-#include "message.h"
-#include "shell.h"
-#include "usb_transport.h"
 #include "io.h"
+#include "message.h"
+
+void signal_handler(int s)
+{
+	switch(s)
+	{
+		case SIGSEGV:
+			error_message("Received segmentation fault\n");
+			break;
+		case SIGHUP:
+			error_message("Received hang up\n");
+			break;
+		case SIGKILL:
+			error_message("Received kill\n");
+			break;
+		default:
+			error_message("Received signal %d\n", s);
+			break;
+	}
+	//cleanup FIXME
+	exit(0);
+}
 
 int main(int argc, char ** argv)
 {
+	signal(SIGSEGV, &signal_handler);
+	signal(SIGHUP, &signal_handler);
+	signal(SIGKILL, &signal_handler);
+
 	if(select_loop() < 0)
 		return -1;
 	return 0;

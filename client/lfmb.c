@@ -55,8 +55,10 @@ help:
 			printf("shell command has no arguments\n");
 			goto help;
 		}
+		set_errorlog("errorlog.txt");
 		if(open_shell() < 0)
-			return -1;
+			{}				//may as well cleanup if its still here...
+		close_errorlog();
 	}
 	else if(strcmp(argv[1], "get") == 0)
 	{
@@ -81,8 +83,10 @@ help:
 			localfile = (char *)calloc(1, strlen(argv[3]) + 1);
 			strcpy(localfile, argv[3]);
 		}
-		
+		if(allocate_read_buffer() < 0)
+			return -1;
 		transfer_file_from_server(remotefile, localfile);
+		free_read_buffer();
 	}
 	else if(strcmp(argv[1], "put") == 0)
 	{
@@ -95,8 +99,10 @@ help:
 		strcpy(localfile, argv[2]);
 		remotefile = (char *)calloc(1, strlen(argv[3]) + 1);
 		strcpy(remotefile, argv[3]);
-		
+		if(allocate_read_buffer() < 0)
+			return -1;
 		transfer_file_to_server(localfile, remotefile);
+		free_read_buffer();
 	}
 	
 	if(localfile)

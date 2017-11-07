@@ -16,6 +16,8 @@
 
 #define TOTAL_FDS						4
 
+extern char * g_read_buffer;
+
 extern int high_fd;
 extern int fds[TOTAL_FDS];
 
@@ -23,3 +25,6 @@ void set_high_fd(void);
 void clear_fds(void);
 void set_non_blocking(void);
 int select_loop(void);
+int allocate_read_buffer(void);
+void free_read_buffer(void);
+

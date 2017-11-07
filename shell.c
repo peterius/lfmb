@@ -85,7 +85,7 @@ int open_shell(void)
 	terminal_set(STDIN_FILENO);
 	
 	if(select_loop() < 0)
-		return -1;	
+		return -1;
 	
 	//SIGHUP ?  exit?
 
@@ -99,7 +99,6 @@ int receive_shell_from_server(char * buffer, int len)
 	//how can we check here for exit/logout command... or do we send it?
 	if(writefd(STDOUT_FILENO, buffer, len) < 0)
 	{
-		free(buffer);
 		return -1;
 	}
 	return 0;
@@ -127,7 +126,6 @@ void terminal_restore(int fd)
 {
     tcsetattr(fd, TCSAFLUSH, &terminal_state);
 }
-
 
 
 

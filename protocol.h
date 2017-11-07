@@ -43,6 +43,7 @@ enum protocol_command
 /* what about endian ness ?!?! FIXME */
 
 #define PACKETHDR_MAGIC			0x6886
+#define MAX_BUFFER_SIZE			4096
 
 struct packethdr
 {
@@ -60,6 +61,7 @@ int send_put_file(char * remotefile);
 int send_open_shell(void);
 #endif //LFMB_CLIENT
 int send_disconnect(void);
+int post_disconnect(void);
 int send_filedata_to_follow(unsigned int filesize);
 int send_filedata(char * buffer, unsigned int bytes);
 int send_filechecksum(uint32_t checksum);
@@ -67,16 +69,16 @@ int receive_filedata_to_follow(unsigned int * total_filesize);
 int receive_filedata(char ** buffer, unsigned int * bytes);
 int receive_filechecksum(uint32_t * received_checksum);
 int send_ack(void);
-int send_error(void);
+int send_error(unsigned short code);
 int receive_ack(void);
 #ifdef LFMB_CLIENT
-int send_to_shell(char * buffer, int len);
+int send_to_shell(char * buffer, unsigned int len);
 int read_from_shell(void);
 #endif //LFMB_CLIENT
 #ifndef LFMB_CLIENT
 int read_and_handle_usb(void);
 #endif //!LFMB_CLIENT
-int send_from_shell(char * buffer, int len);
+int send_from_shell(char * buffer, unsigned int len);
 int readfd(int fd, char * buffer, int len);
 int writefd(int fd, char * buffer, int len);
 

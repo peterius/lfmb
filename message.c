@@ -18,13 +18,29 @@
 #include <stdarg.h>
 #include "message.h"
 
+FILE * errorlog = NULL;
+
+void set_errorlog(const char * filename)
+{
+	//errorlog = fopen(filename, "w");
+}
+
+void close_errorlog(void)
+{
+	if(errorlog)
+		fclose(errorlog);
+}
+
 //same for now FIXME
 int error_message(const char * format, ...)
 {
 	int ret;
 	va_list args;
 	va_start(args, format);
-	ret = vfprintf(stderr, format, args);
+	if(errorlog)
+		ret = vfprintf(errorlog, format, args);
+	else
+		ret = vfprintf(stderr, format, args);
 	va_end(args);
 	return ret;
 }
@@ -34,7 +50,10 @@ int message(const char * format, ...)
 	int ret;
 	va_list args;
 	va_start(args, format);
-	ret = vfprintf(stderr, format, args);
+	if(errorlog)
+		ret = vfprintf(errorlog, format, args);
+	else
+		ret = vfprintf(stderr, format, args);
 	va_end(args);
 	return ret;
 }

@@ -20,3 +20,4 @@ int transfer_file_to_server(char * localfile, char * remotefile);
 #else
 int server_receives_file(char * filepath);
 #endif //LFMB_CLIENT
+int get_file(char * filepath);

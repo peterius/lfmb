@@ -31,12 +31,12 @@ void fill_descriptors_strings(void)
 	descriptors.header.fs_count = 3;
 	descriptors.header.hs_count = 3;
 	descriptors.fs_descs.intf.bLength = sizeof(descriptors.fs_descs.intf);
-   descriptors.fs_descs.intf.bDescriptorType = USB_DT_INTERFACE;
+	descriptors.fs_descs.intf.bDescriptorType = USB_DT_INTERFACE;
 	descriptors.fs_descs.intf.bInterfaceNumber = 0;
 	descriptors.fs_descs.intf.bNumEndpoints = 2;
 	descriptors.fs_descs.intf.bInterfaceClass = VENDOR_SPECIFIC_CLASS;
-	descriptors.fs_descs.intf.bInterfaceSubClass = ADB_SUBCLASS;
-	descriptors.fs_descs.intf.bInterfaceProtocol = ADB_PROTOCOL;
+	descriptors.fs_descs.intf.bInterfaceSubClass = LFMB_SUBCLASS;
+	descriptors.fs_descs.intf.bInterfaceProtocol = LFMB_PROTOCOL;
 	descriptors.fs_descs.intf.iInterface = 1; /* first string from the provided table */
 	descriptors.fs_descs.source.bLength = sizeof(descriptors.fs_descs.source);
 	descriptors.fs_descs.source.bDescriptorType = USB_DT_ENDPOINT;
@@ -53,8 +53,8 @@ void fill_descriptors_strings(void)
 	descriptors.hs_descs.intf.bInterfaceNumber = 0;
 	descriptors.hs_descs.intf.bNumEndpoints = 2;
 	descriptors.hs_descs.intf.bInterfaceClass = VENDOR_SPECIFIC_CLASS;
-	descriptors.hs_descs.intf.bInterfaceSubClass = ADB_SUBCLASS;
-	descriptors.hs_descs.intf.bInterfaceProtocol = ADB_PROTOCOL;
+	descriptors.hs_descs.intf.bInterfaceSubClass = LFMB_SUBCLASS;
+	descriptors.hs_descs.intf.bInterfaceProtocol = LFMB_PROTOCOL;
 	descriptors.hs_descs.intf.iInterface = 1; /* first string from the provided table */
 	descriptors.hs_descs.source.bLength = sizeof(descriptors.hs_descs.source);
 	descriptors.hs_descs.source.bDescriptorType = USB_DT_ENDPOINT;
@@ -68,7 +68,7 @@ void fill_descriptors_strings(void)
 	descriptors.hs_descs.sink.wMaxPacketSize = MAX_PACKET_SIZE_HS;
 
 	strings.header.magic = htole32(FUNCTIONFS_STRINGS_MAGIC);
-	strings.header.length =htole32(sizeof(strings));
+	strings.header.length = htole32(sizeof(strings));
 	strings.header.str_count = htole32(1);
 	strings.header.lang_count = htole32(1);
 	strings.lang0.code = htole16(0x0409);
