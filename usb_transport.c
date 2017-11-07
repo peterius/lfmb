@@ -471,7 +471,6 @@ int usb_ffs_write(void * data, unsigned int len)
 	size_t count = 0;
 	int ret;
 
-	message("usb_ffs_write called with %p %d\n", data, len);
 	while (count < len)
 	{
 		ret = write(usb_bulkout_fd, data + count, len - count);
@@ -482,7 +481,6 @@ int usb_ffs_write(void * data, unsigned int len)
 		}
 		else
 			count += ret;
-		message("usb_ffs_write count %d len %d\n", count, len);
 	}
 
 	return count;
@@ -515,11 +513,11 @@ int usb_async_write_post(void * data, unsigned int len)
 	return 0;
 }
 
+/* it still reads when it shouldn't, polling for read seems unreliable and we have to rely on the protocol basically FIXME */
 int usb_ffs_read(unsigned short * len, unsigned short previously_read)
 {
 	int ret;
 
-	message("usb_ffs_read called %d %d\n", *len, previously_read);
 	while (previously_read < *len)
 	{
 		ret = read(usb_bulkin_fd, g_read_buffer + previously_read, *len - previously_read);
@@ -530,7 +528,6 @@ int usb_ffs_read(unsigned short * len, unsigned short previously_read)
 		}
 		else
 			previously_read += ret;
-		//message("usb_ffs_read: count %d len %d\n", previously_read, *len);			//a lot of these
 	}
 	*len = previously_read;
 	return 0;
