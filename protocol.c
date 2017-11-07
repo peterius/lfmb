@@ -454,6 +454,10 @@ int handle(char * p, int len)
 					le16toh(ph->command) != (enum protocol_command)c_disconnect)
 	{
 		error_message("shell protocol command error %04x\n", le16toh(ph->command));
+		/* FIXME we need some kind of soft error here, so we can reconnect without writing descriptors maybe?
+		 * for instance, shell dies from the host, terminal crashes or something.  device still things there's a shell connection
+		 * we come back and try to reconnect, we get protocol command 0 here, but then it tries to send_error and reset
+		 * and fails when it could just pretend it was already connected */
 		send_error(0);
 		goto handle_error;
 	}
@@ -472,6 +476,10 @@ int handle(char * p, int len)
 		packet_chain = packet_chain->next;
 		free(pc);
 		/* We could return -1 here, but I feel like we should know when the socket dies */
+		if(transport_reset() < 0)
+			return -1;
+		connection_state = s_no_connection;
+		last_size = 0;
 		return 0;
 	}
 	last_size = le16toh(ph->length);
