@@ -80,7 +80,6 @@ void set_non_blocking(void)
 		flags |= O_NONBLOCK;
 		if(fcntl(fds[i], F_SETFL, flags) != 0)
 			error_message("Can't set file descriptor to non blocking %d err: %d\n", fds[i], errno);			//fatal?
-		message("set fd %d to non blocking\n", fds[i]);
 	}
 }
 
