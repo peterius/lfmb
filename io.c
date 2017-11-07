@@ -221,9 +221,14 @@ int select_loop(void)
 #ifndef LFMB_CLIENT
 			if(FD_READABLE(usb_bulkin_fd))
 			{
-				if(read_and_handle_usb() < 0)
+				if((ret = read_and_handle_usb()) < 0)
 				{
-					if(transport_reset() < 0)
+					if(ret == -ESHUTDOWN)
+					{
+						error_message("probable cable disconnect\n");
+						clear_connection();
+					}
+					else if(transport_reset() < 0)
 					{
 						error_message("bulkin transport reset failure\n");
 						free_read_buffer(); return -1;

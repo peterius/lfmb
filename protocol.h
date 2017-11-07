@@ -62,6 +62,7 @@ int send_open_shell(void);
 #endif //LFMB_CLIENT
 int send_disconnect(void);
 int post_disconnect(void);
+void clear_connection(void);
 int send_filedata_to_follow(unsigned int filesize);
 int send_filedata(char * buffer, unsigned int bytes);
 int send_filechecksum(uint32_t checksum);

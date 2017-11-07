@@ -461,7 +461,7 @@ int usb_ffs_init(void)
 	system("ls /sys/class/udc > /sys/kernel/config/usb_gadget/g1/UDC");
 	message("usb_ffs_init successful\n");
 	if(not_first_init)
-		sleep(5);
+		sleep(1);
 	not_first_init = 1;
 	return 0;
 }
@@ -478,7 +478,7 @@ int usb_ffs_write(void * data, unsigned int len)
 		if (ret < 0)
 		{
 			if (errno != EINTR)
-				{ error_message("usb ffs write failed fd %d length %d count %d\n", usb_bulkin_fd, len, count); return ret; }
+				{ error_message("usb ffs write failed fd %d length %d count %d\n", usb_bulkin_fd, len, count); return -errno; }
 		}
 		else
 			count += ret;
@@ -526,7 +526,7 @@ int usb_ffs_read(unsigned short * len, unsigned short previously_read)
 		if (ret < 0)
 		{
 			if (errno != EINTR && errno != EWOULDBLOCK)
-				{ error_message("usb ffs read failed fd %d length %d count %d -(%d)\n", usb_bulkout_fd, *len, previously_read, errno); return ret; }
+				{ error_message("usb ffs read failed fd %d length %d count %d -(%d)\n", usb_bulkout_fd, *len, previously_read, errno); return -errno; }
 		}
 		else
 			previously_read += ret;

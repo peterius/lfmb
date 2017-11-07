@@ -26,8 +26,9 @@
 #include "message.h"
 #include "packet.h"
 
-/* FIXME all the sends still allocate buffers which is really unnecessary, I just didn't want
- * to mess with it right now... now with the async libusb, it's even uglier FIXME */
+/* FIXME all the reads and writes need to properly return errnos so that we can
+ * catch ESHUTDOWN for a cable disconnect and possibly others.  We also need
+ * in general better error handling and cleanup FIXME */
 
 unsigned short handshake_value;
 unsigned int last_size;
@@ -49,27 +50,15 @@ int send_connect(void);
 int receive_accept(void);
 #endif //LFMB_CLIENT
 
+void free_packet_chain(void);
+
 int transport_reset(void)
 {
 #ifdef LFMB_CLIENT
 	/* no reason to, client can be restarted */
 	return -1;
-#else
-	struct packet_packet * p;
-	if(packet_chain)
-	{
-		//free the terminal write post chain before resetting
-		p = packet_chain;
-		while(packet_chain)
-		{
-			p = packet_chain;
-			packet_chain = p->next;
-			free(p->data);
-			free(p);
-		}
-		packet_chain = NULL;
-	}
 #endif //LFMB_CLIENT
+	free_packet_chain();
 	if(usb_bulkin_fd >= 0)
 		usb_reset();
 	else 
@@ -227,6 +216,18 @@ int post_disconnect(void)
 	connection_state = s_disconnect_posted;
 	last_size = 0;
 	return 0;
+}
+
+/* if cable is disconnected, we don't want to do anything too serious.
+ * trying to reinitialize previously initialized functionfs unfortunately
+ * will cause errors.  we just want to reset the protocol and pretend
+ * everything is okay. */
+void clear_connection(void)
+{
+	free_packet_chain();
+	
+	connection_state = s_no_connection;
+	last_size = 0;
 }
 
 int send_filedata_to_follow(unsigned int filesize)
@@ -635,10 +636,11 @@ int read_and_handle_usb(void)
 	unsigned short length;
 	unsigned short bytes_received;
 	unsigned short b;
-
+	int ret;
+	
 	bytes_received = sizeof(struct packethdr);
-	if(usb_read(&bytes_received, 0) < 0)
-		return -1;
+	if((ret = usb_read(&bytes_received, 0)) < 0)
+		return ret;
 	length = le16toh(((struct packethdr *)g_read_buffer)->length);
 
 	if(!length || le16toh(((struct packethdr *)g_read_buffer)->magic) != PACKETHDR_MAGIC)
@@ -648,8 +650,8 @@ int read_and_handle_usb(void)
 	{
 		b = bytes_received;
 		bytes_received = length;
-		if(usb_read(&bytes_received, b) < 0)
-			return -1;
+		if((ret = usb_read(&bytes_received, b)) < 0)
+			return ret;
 	}
 	if(handle(g_read_buffer, length) < 0)
 		return -1;
@@ -772,5 +774,20 @@ int writefd(int fd, char * buffer, int len)
 	return 0;
 }
 
-
-
+void free_packet_chain(void)
+{
+	struct packet_packet * p;
+	if(packet_chain)
+	{
+		//free the terminal write post chain before resetting
+		p = packet_chain;
+		while(packet_chain)
+		{
+			p = packet_chain;
+			packet_chain = p->next;
+			free(p->data);
+			free(p);
+		}
+		packet_chain = NULL;
+	}
+}

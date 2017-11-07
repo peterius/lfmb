@@ -37,6 +37,7 @@ void signal_handler(int s)
 			error_message("Received signal %d\n", s);
 			break;
 	}
+	sleep(10);
 	//cleanup FIXME
 	exit(0);
 }
