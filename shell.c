@@ -85,7 +85,7 @@ int open_shell(void)
 	terminal_set(STDIN_FILENO);
 	
 	if(select_loop() < 0)
-		return -1;
+		{}
 	
 	//SIGHUP ?  exit?
 
